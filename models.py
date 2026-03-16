@@ -77,8 +77,39 @@ class StelLATransformer(nn.Module):
             lora_alpha=alpha,
             target_modules=["c_attn", "c_proj", "c_fc"],
             bias="none",
+            stella_grad_scaling=float(n_embd),
+            stella_retraction="exp_map",
         )
         self.model = get_peft_model(base, stella_config)
+        # Register the StellaModel so the optimizer hooks can find it.
+        # This works because expressivity creates the model, then immediately
+        # creates the optimizer from model.parameters().
+        StelLAAdamW._current_stella_model = self.model
 
     def forward(self, x):
         return self.model(x)
+
+
+# ── Optimizer with Stiefel hooks for StelLA ──────────────────────────────────
+
+
+class StelLAAdamW(torch.optim.AdamW):
+    """AdamW that registers StelLA's Riemannian pre/post hooks on creation.
+
+    The expressivity library creates the optimizer as:
+        optimizer = optimizer_class(model.parameters(), lr)
+    We intercept this to find the StellaModel and register the hooks.
+    """
+
+    def __init__(self, params, lr=0.001, **kwargs):
+        super().__init__(list(params), lr=lr, **kwargs)
+        stella_model = StelLAAdamW._current_stella_model
+        if stella_model is not None:
+            self.register_step_pre_hook(
+                lambda opt, args, kwargs: stella_model.pre_optimizer_step()
+            )
+            self.register_step_post_hook(
+                lambda opt, args, kwargs: stella_model.post_optimizer_step()
+            )
+
+    _current_stella_model = None

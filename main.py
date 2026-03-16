@@ -1,5 +1,5 @@
 from expressivity import ArchitecturalSpace, ArchitectureComparator
-from models import LoRATransformer, StelLATransformer, Transformer
+from models import LoRATransformer, StelLATransformer, StelLAAdamW, Transformer
 
 # ── Shared architecture hyper-parameters (tiny) ─────────────────────────────
 
@@ -32,6 +32,7 @@ stella_space = ArchitecturalSpace(
     INPUT_SIZE, "StelLA", StelLATransformer, stella_params,
     epoch=10, lr=0.01, automatic_mesurement_mode="parameters",
     batch_size=BATCH_SIZE, automatic_batch_size_scale=None,
+    optimizer=StelLAAdamW,
 )
 
 transformer_space = ArchitecturalSpace(
