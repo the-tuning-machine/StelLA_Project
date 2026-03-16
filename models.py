@@ -4,10 +4,10 @@ import os
 import torch
 import torch.nn as nn
 
-# nanoGPT is not a proper Python package (no pyproject.toml / setup.py),
+# nanoGPT is not a proper Python package (no __init__.py / pyproject.toml),
 # so we add it to sys.path to import its model module.
-# sys.path.insert(0, os.path.join(os.path.dirname(__file__), "nanoGPT"))
-from nanoGPT.model import GPTConfig, Block, LayerNorm
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nanoGPT"))
+from model import GPTConfig, Block, LayerNorm
 
 # stella is installed via: uv add "stella @ git+https://github.com/SonyResearch/stella"
 from stella import StellaConfig
