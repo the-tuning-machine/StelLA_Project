@@ -237,41 +237,6 @@ def plot_time_breakdown(results: list[BenchResult]):
     print("  -> Saved benchmark_time_breakdown.png")
 
 
-def plot_gpu_memory_timeline(results: list[BenchResult]):
-    """GPU memory allocated & reserved over training steps for each model."""
-    if not USE_GPU:
-        print("  -> Skipping GPU memory timeline (no GPU)")
-        return
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    # Allocated memory
-    ax = axes[0]
-    for r in results:
-        if r.gpu_mem_allocated_mb:
-            label = f"{r.name} r={r.rank}" if r.rank else r.name
-            ax.plot(r.gpu_mem_allocated_mb, label=label, alpha=0.8)
-    ax.set_xlabel("Step")
-    ax.set_ylabel("GPU Memory Allocated (MB)")
-    ax.set_title("GPU Memory Allocated per Step")
-    ax.legend(fontsize=7)
-
-    # Reserved memory
-    ax = axes[1]
-    for r in results:
-        if r.gpu_mem_reserved_mb:
-            label = f"{r.name} r={r.rank}" if r.rank else r.name
-            ax.plot(r.gpu_mem_reserved_mb, label=label, alpha=0.8)
-    ax.set_xlabel("Step")
-    ax.set_ylabel("GPU Memory Reserved (MB)")
-    ax.set_title("GPU Memory Reserved (cache) per Step")
-    ax.legend(fontsize=7)
-
-    fig.tight_layout()
-    fig.savefig("benchmark_gpu_memory_timeline.png", dpi=150)
-    plt.close(fig)
-    print("  -> Saved benchmark_gpu_memory_timeline.png")
-
 
 def plot_gpu_memory_phases(results: list[BenchResult]):
     """Per-phase memory footprint: before fwd, after fwd, after bwd, after step."""
@@ -314,31 +279,6 @@ def plot_gpu_memory_phases(results: list[BenchResult]):
     plt.close(fig)
     print("  -> Saved benchmark_gpu_memory_phases.png")
 
-
-def plot_step_time_timeline(results: list[BenchResult]):
-    """Time per step over training — shows warmup/stabilization and variance."""
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4), sharey=True)
-
-    for ax, (phase, attr) in zip(axes, [
-        ("Forward", "fwd_times_ms"),
-        ("Backward", "bwd_times_ms"),
-        ("Optim step", "step_times_ms"),
-    ]):
-        for r in results:
-            times = getattr(r, attr)
-            if times:
-                label = f"{r.name} r={r.rank}" if r.rank else r.name
-                ax.plot(times, label=label, alpha=0.7, linewidth=0.8)
-        ax.set_xlabel("Step")
-        ax.set_ylabel("Time (ms)")
-        ax.set_title(phase)
-        ax.legend(fontsize=6)
-
-    fig.suptitle("Per-step timing over training (detect variance & spikes)", y=1.02)
-    fig.tight_layout()
-    fig.savefig("benchmark_step_time_timeline.png", dpi=150)
-    plt.close(fig)
-    print("  -> Saved benchmark_step_time_timeline.png")
 
 
 def plot_throughput_comparison(results: list[BenchResult]):
@@ -455,9 +395,7 @@ def main():
 
     print("\nGenerating plots...")
     plot_time_breakdown(results)
-    plot_gpu_memory_timeline(results)
     plot_gpu_memory_phases(results)
-    plot_step_time_timeline(results)
     plot_throughput_comparison(results)
     plot_peak_memory(results)
     print("Done!")
