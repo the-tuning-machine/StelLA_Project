@@ -45,12 +45,12 @@ transformer_space = ArchitecturalSpace(
 
 # 1. LoRA vs StelLA (direct)
 comparator_direct = ArchitectureComparator(lora_space, stella_space)
-res1 = comparator_direct.compare(20, 20)
+res1 = comparator_direct.compare(100, 20)
 print(res1)
 comparator_direct.plot("min")
 
 # 2. LoRA vs StelLA with Transformer as neutral baseline
 comparator_baseline = ArchitectureComparator(lora_space, stella_space, transformer_space)
-res2 = comparator_baseline.compare(20, 20)
+res2 = comparator_baseline.compare(100, 20)
 print(res2)
 comparator_baseline.plot("min")

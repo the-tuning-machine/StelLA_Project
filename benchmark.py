@@ -4,14 +4,16 @@ Benchmark LoRA vs StelLA vs Transformer on training cost metrics.
 Measures per architecture:
   - Trainable / total parameters
   - Optimizer state memory (Adam: 2 floats per trainable param)
-  - Peak RSS memory during a training loop
+  - Peak GPU/RSS memory during a training loop
   - Wall time breakdown: forward, backward, optimizer step
+  - GPU utilization timeline & memory usage plots
 """
 
 import time
 import tracemalloc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 
@@ -29,6 +31,9 @@ WARMUP_STEPS = 5
 BENCH_STEPS = 50
 RANKS = [1, 2, 4, 8]
 
+USE_GPU = torch.cuda.is_available()
+DEVICE = torch.device("cuda" if USE_GPU else "cpu")
+
 
 @dataclass
 class BenchResult:
@@ -41,6 +46,13 @@ class BenchResult:
     avg_forward_ms: float
     avg_backward_ms: float
     avg_step_ms: float
+    # Per-step GPU timeline data
+    gpu_mem_allocated_mb: list[float] = field(default_factory=list)
+    gpu_mem_reserved_mb: list[float] = field(default_factory=list)
+    gpu_util_timeline: list[dict] = field(default_factory=list)
+    fwd_times_ms: list[float] = field(default_factory=list)
+    bwd_times_ms: list[float] = field(default_factory=list)
+    step_times_ms: list[float] = field(default_factory=list)
 
     @property
     def avg_total_ms(self):
@@ -52,14 +64,20 @@ class BenchResult:
         return BATCH / (self.avg_total_ms / 1000)
 
 
+def _sync():
+    """Synchronize GPU if available (needed for accurate timing)."""
+    if USE_GPU:
+        torch.cuda.synchronize()
+
+
 def bench_model(name, model, optimizer, rank=None):
-    x = torch.randn(BATCH, SEQ_LEN, N_EMBD)
+    model = model.to(DEVICE)
+    x = torch.randn(BATCH, SEQ_LEN, N_EMBD, device=DEVICE)
     criterion = nn.MSELoss()
-    target = torch.randn(BATCH, SEQ_LEN, N_EMBD)
+    target = torch.randn(BATCH, SEQ_LEN, N_EMBD, device=DEVICE)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
-    # Adam stores (exp_avg, exp_avg_sq) per trainable param, each is float32
     opt_state_bytes = trainable * 2 * 4
 
     # Warmup
@@ -69,33 +87,108 @@ def bench_model(name, model, optimizer, rank=None):
         loss = criterion(out, target)
         loss.backward()
         optimizer.step()
+    _sync()
 
     # Benchmark
     fwd_times, bwd_times, step_times = [], [], []
+    gpu_mem_alloc, gpu_mem_reserved = [], []
+    gpu_util_timeline = []  # per-step breakdown
 
-    tracemalloc.start()
-    tracemalloc.reset_peak()
+    if USE_GPU:
+        torch.cuda.reset_peak_memory_stats()
+    else:
+        tracemalloc.start()
+        tracemalloc.reset_peak()
 
-    for _ in range(BENCH_STEPS):
+    for step_i in range(BENCH_STEPS):
         optimizer.zero_grad()
 
-        t0 = time.perf_counter()
+        # -- Record GPU memory before forward --
+        if USE_GPU:
+            _sync()
+            mem_before = torch.cuda.memory_allocated() / 1e6
+
+        # Forward
+        if USE_GPU:
+            start_fwd = torch.cuda.Event(enable_timing=True)
+            end_fwd = torch.cuda.Event(enable_timing=True)
+            start_fwd.record()
+        else:
+            t0 = time.perf_counter()
+
         out = model(x)
         loss = criterion(out, target)
-        t1 = time.perf_counter()
+
+        if USE_GPU:
+            end_fwd.record()
+            _sync()
+            fwd_ms = start_fwd.elapsed_time(end_fwd)
+            mem_after_fwd = torch.cuda.memory_allocated() / 1e6
+        else:
+            t1 = time.perf_counter()
+            fwd_ms = (t1 - t0) * 1000
+
+        # Backward
+        if USE_GPU:
+            start_bwd = torch.cuda.Event(enable_timing=True)
+            end_bwd = torch.cuda.Event(enable_timing=True)
+            start_bwd.record()
+        else:
+            t1 = time.perf_counter()
 
         loss.backward()
-        t2 = time.perf_counter()
+
+        if USE_GPU:
+            end_bwd.record()
+            _sync()
+            bwd_ms = start_bwd.elapsed_time(end_bwd)
+            mem_after_bwd = torch.cuda.memory_allocated() / 1e6
+        else:
+            t2 = time.perf_counter()
+            bwd_ms = (t2 - t1) * 1000
+
+        # Optimizer step
+        if USE_GPU:
+            start_step = torch.cuda.Event(enable_timing=True)
+            end_step = torch.cuda.Event(enable_timing=True)
+            start_step.record()
+        else:
+            t2 = time.perf_counter()
 
         optimizer.step()
-        t3 = time.perf_counter()
 
-        fwd_times.append(t1 - t0)
-        bwd_times.append(t2 - t1)
-        step_times.append(t3 - t2)
+        if USE_GPU:
+            end_step.record()
+            _sync()
+            step_ms = start_step.elapsed_time(end_step)
+            mem_after_step = torch.cuda.memory_allocated() / 1e6
+        else:
+            t3 = time.perf_counter()
+            step_ms = (t3 - t2) * 1000
 
-    _, peak_mem = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+        fwd_times.append(fwd_ms)
+        bwd_times.append(bwd_ms)
+        step_times.append(step_ms)
+
+        if USE_GPU:
+            gpu_mem_alloc.append(torch.cuda.memory_allocated() / 1e6)
+            gpu_mem_reserved.append(torch.cuda.memory_reserved() / 1e6)
+            gpu_util_timeline.append({
+                "step": step_i,
+                "mem_before_mb": mem_before,
+                "mem_after_fwd_mb": mem_after_fwd,
+                "mem_after_bwd_mb": mem_after_bwd,
+                "mem_after_step_mb": mem_after_step,
+                "fwd_ms": fwd_ms,
+                "bwd_ms": bwd_ms,
+                "step_ms": step_ms,
+            })
+
+    if USE_GPU:
+        peak_mem = torch.cuda.max_memory_allocated()
+    else:
+        _, peak_mem = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
 
     return BenchResult(
         name=name,
@@ -104,13 +197,203 @@ def bench_model(name, model, optimizer, rank=None):
         total_params=total,
         optimizer_state_bytes=opt_state_bytes,
         peak_memory_bytes=peak_mem,
-        avg_forward_ms=sum(fwd_times) / len(fwd_times) * 1000,
-        avg_backward_ms=sum(bwd_times) / len(bwd_times) * 1000,
-        avg_step_ms=sum(step_times) / len(step_times) * 1000,
+        avg_forward_ms=sum(fwd_times) / len(fwd_times),
+        avg_backward_ms=sum(bwd_times) / len(bwd_times),
+        avg_step_ms=sum(step_times) / len(step_times),
+        gpu_mem_allocated_mb=gpu_mem_alloc,
+        gpu_mem_reserved_mb=gpu_mem_reserved,
+        gpu_util_timeline=gpu_util_timeline,
+        fwd_times_ms=fwd_times,
+        bwd_times_ms=bwd_times,
+        step_times_ms=step_times,
     )
 
 
+# ── Plotting ─────────────────────────────────────────────────────────────────
+
+
+def plot_time_breakdown(results: list[BenchResult]):
+    """Stacked bar chart: forward / backward / optimizer step per model+rank."""
+    labels = [f"{r.name}\nr={r.rank}" if r.rank else r.name for r in results]
+    fwd = [r.avg_forward_ms for r in results]
+    bwd = [r.avg_backward_ms for r in results]
+    step = [r.avg_step_ms for r in results]
+
+    x = range(len(results))
+    fig, ax = plt.subplots(figsize=(max(8, len(results) * 0.8), 5))
+    ax.bar(x, fwd, label="Forward", color="#4C72B0")
+    ax.bar(x, bwd, bottom=fwd, label="Backward", color="#DD8452")
+    ax.bar(x, step, bottom=[f + b for f, b in zip(fwd, bwd)], label="Optim step", color="#55A868")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("Time (ms)")
+    ax.set_title("Per-step time breakdown (forward / backward / optimizer)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig("benchmark_time_breakdown.png", dpi=150)
+    plt.close(fig)
+    print("  -> Saved benchmark_time_breakdown.png")
+
+
+def plot_gpu_memory_timeline(results: list[BenchResult]):
+    """GPU memory allocated & reserved over training steps for each model."""
+    if not USE_GPU:
+        print("  -> Skipping GPU memory timeline (no GPU)")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Allocated memory
+    ax = axes[0]
+    for r in results:
+        if r.gpu_mem_allocated_mb:
+            label = f"{r.name} r={r.rank}" if r.rank else r.name
+            ax.plot(r.gpu_mem_allocated_mb, label=label, alpha=0.8)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("GPU Memory Allocated (MB)")
+    ax.set_title("GPU Memory Allocated per Step")
+    ax.legend(fontsize=7)
+
+    # Reserved memory
+    ax = axes[1]
+    for r in results:
+        if r.gpu_mem_reserved_mb:
+            label = f"{r.name} r={r.rank}" if r.rank else r.name
+            ax.plot(r.gpu_mem_reserved_mb, label=label, alpha=0.8)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("GPU Memory Reserved (MB)")
+    ax.set_title("GPU Memory Reserved (cache) per Step")
+    ax.legend(fontsize=7)
+
+    fig.tight_layout()
+    fig.savefig("benchmark_gpu_memory_timeline.png", dpi=150)
+    plt.close(fig)
+    print("  -> Saved benchmark_gpu_memory_timeline.png")
+
+
+def plot_gpu_memory_phases(results: list[BenchResult]):
+    """Per-phase memory footprint: before fwd, after fwd, after bwd, after step."""
+    if not USE_GPU:
+        print("  -> Skipping GPU memory phases (no GPU)")
+        return
+
+    gpu_results = [r for r in results if r.gpu_util_timeline]
+    if not gpu_results:
+        return
+
+    fig, ax = plt.subplots(figsize=(max(8, len(gpu_results) * 1.2), 5))
+    x = range(len(gpu_results))
+    width = 0.2
+
+    # Average across steps for each phase
+    phases = {
+        "Before fwd": ("mem_before_mb", "#4C72B0"),
+        "After fwd": ("mem_after_fwd_mb", "#DD8452"),
+        "After bwd": ("mem_after_bwd_mb", "#55A868"),
+        "After optim": ("mem_after_step_mb", "#C44E52"),
+    }
+
+    for i, (phase_name, (key, color)) in enumerate(phases.items()):
+        vals = []
+        for r in gpu_results:
+            avg = sum(s[key] for s in r.gpu_util_timeline) / len(r.gpu_util_timeline)
+            vals.append(avg)
+        offset = (i - 1.5) * width
+        ax.bar([xi + offset for xi in x], vals, width=width, label=phase_name, color=color)
+
+    labels = [f"{r.name}\nr={r.rank}" if r.rank else r.name for r in gpu_results]
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("GPU Memory (MB)")
+    ax.set_title("GPU Memory per Training Phase (avg over steps)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig("benchmark_gpu_memory_phases.png", dpi=150)
+    plt.close(fig)
+    print("  -> Saved benchmark_gpu_memory_phases.png")
+
+
+def plot_step_time_timeline(results: list[BenchResult]):
+    """Time per step over training — shows warmup/stabilization and variance."""
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4), sharey=True)
+
+    for ax, (phase, attr) in zip(axes, [
+        ("Forward", "fwd_times_ms"),
+        ("Backward", "bwd_times_ms"),
+        ("Optim step", "step_times_ms"),
+    ]):
+        for r in results:
+            times = getattr(r, attr)
+            if times:
+                label = f"{r.name} r={r.rank}" if r.rank else r.name
+                ax.plot(times, label=label, alpha=0.7, linewidth=0.8)
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Time (ms)")
+        ax.set_title(phase)
+        ax.legend(fontsize=6)
+
+    fig.suptitle("Per-step timing over training (detect variance & spikes)", y=1.02)
+    fig.tight_layout()
+    fig.savefig("benchmark_step_time_timeline.png", dpi=150)
+    plt.close(fig)
+    print("  -> Saved benchmark_step_time_timeline.png")
+
+
+def plot_throughput_comparison(results: list[BenchResult]):
+    """Bar chart comparing throughput (samples/s) across models."""
+    labels = [f"{r.name}\nr={r.rank}" if r.rank else r.name for r in results]
+    throughputs = [r.throughput for r in results]
+    colors = {"Transformer": "#4C72B0", "LoRA": "#DD8452", "StelLA": "#55A868"}
+
+    fig, ax = plt.subplots(figsize=(max(8, len(results) * 0.8), 5))
+    bars = ax.bar(range(len(results)), throughputs,
+                  color=[colors.get(r.name, "#999999") for r in results])
+    ax.set_xticks(range(len(results)))
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("Samples / second")
+    ax.set_title("Training Throughput Comparison")
+
+    # Add value labels on bars
+    for bar, val in zip(bars, throughputs):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                f"{val:.0f}", ha="center", va="bottom", fontsize=7)
+
+    fig.tight_layout()
+    fig.savefig("benchmark_throughput.png", dpi=150)
+    plt.close(fig)
+    print("  -> Saved benchmark_throughput.png")
+
+
+def plot_peak_memory(results: list[BenchResult]):
+    """Bar chart of peak memory per model."""
+    labels = [f"{r.name}\nr={r.rank}" if r.rank else r.name for r in results]
+    peak_mb = [r.peak_memory_bytes / 1e6 for r in results]
+    colors = {"Transformer": "#4C72B0", "LoRA": "#DD8452", "StelLA": "#55A868"}
+
+    fig, ax = plt.subplots(figsize=(max(8, len(results) * 0.8), 5))
+    bars = ax.bar(range(len(results)), peak_mb,
+                  color=[colors.get(r.name, "#999999") for r in results])
+    ax.set_xticks(range(len(results)))
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("Peak Memory (MB)")
+    ax.set_title(f"Peak {'GPU' if USE_GPU else 'RSS'} Memory")
+
+    for bar, val in zip(bars, peak_mb):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                f"{val:.1f}", ha="center", va="bottom", fontsize=7)
+
+    fig.tight_layout()
+    fig.savefig("benchmark_peak_memory.png", dpi=150)
+    plt.close(fig)
+    print("  -> Saved benchmark_peak_memory.png")
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+
 def main():
+    print(f"Device: {DEVICE}" + (f" ({torch.cuda.get_device_name()})" if USE_GPU else ""))
+
     results: list[BenchResult] = []
     base_kw = {"n_embd": N_EMBD, "n_head": N_HEAD, "n_layer": N_LAYER, "block_size": BLOCK_SIZE}
 
@@ -165,6 +448,17 @@ def main():
             f"total +{total_overhead:+.1f}%, "
             f"peak mem +{mem_overhead:+.1f}%"
         )
+
+    # ── Generate plots ───────────────────────────────────────────────────────
+
+    print("\nGenerating plots...")
+    plot_time_breakdown(results)
+    plot_gpu_memory_timeline(results)
+    plot_gpu_memory_phases(results)
+    plot_step_time_timeline(results)
+    plot_throughput_comparison(results)
+    plot_peak_memory(results)
+    print("Done!")
 
 
 if __name__ == "__main__":
