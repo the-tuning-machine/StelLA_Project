@@ -23,15 +23,15 @@ from models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-N_EMBD = 8
-N_HEAD = 2
-N_LAYER = 1
-BLOCK_SIZE = 16
-SEQ_LEN = 5
-BATCH = 32
+N_EMBD = 512
+N_HEAD = 8
+N_LAYER = 6
+BLOCK_SIZE = 256
+SEQ_LEN = 128
+BATCH = 16
 WARMUP_STEPS = 5
 BENCH_STEPS = 50
-RANKS = [1, 2, 4, 8]
+RANKS = [4, 16, 32, 64]
 
 USE_GPU = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if USE_GPU else "cpu")
