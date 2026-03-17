@@ -13,6 +13,8 @@ import time
 import tracemalloc
 from dataclasses import dataclass, field
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
