@@ -339,12 +339,12 @@ def main():
     results: list[BenchResult] = []
     base_kw = {"n_embd": N_EMBD, "n_head": N_HEAD, "n_layer": N_LAYER, "block_size": BLOCK_SIZE}
 
-    for rank in RANKS:
-        # Transformer (baseline, same for all ranks)
-        m = Transformer(**base_kw)
-        opt = torch.optim.AdamW(m.parameters(), lr=0.01)
-        results.append(bench_model("Transformer", m, opt, rank=None))
+    # Transformer baseline (no rank dependency, bench once)
+    m = Transformer(**base_kw)
+    opt = torch.optim.AdamW(m.parameters(), lr=0.01)
+    results.append(bench_model("Transformer", m, opt, rank=None))
 
+    for rank in RANKS:
         # LoRA
         m = LoRATransformer(**base_kw, rank=rank)
         opt = torch.optim.AdamW(m.parameters(), lr=0.01)
