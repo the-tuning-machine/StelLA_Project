@@ -8,3 +8,17 @@ wheels/
 
 # Virtual environments
 .venv
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.pdf
+*.toc
+*.synctex.gz
+
+# Résultats et images
+figures/
+results/
+*.json
+*.png
