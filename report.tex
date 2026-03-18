@@ -1,0 +1,226 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{subcaption}
+
+\title{\textbf{MVA Poster Presentation Report: \\ Verifying Subspace Learning in Low-Rank Adaptation (StelLA)}}
+\author{Your Name \and Your Partner's Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Goal and Paper Claims}
+The objective of this project is to analyze and empirically verify the key algorithmic and quantitative claims of the paper \textit{StelLA: Subspace Learning in Low-rank Adaptation using Stiefel Manifold}[cite: 66].
+
+Low-Rank Adaptation (LoRA) is a widely adopted Parameter-Efficient Fine-Tuning (PEFT) method that updates a frozen pre-trained weight matrix $W \in \mathbb{R}^{m \times n}$ by adding a low-rank decomposition $BA^\top$[cite: 85, 86, 87]. However, the paper argues that LoRA lags behind full fine-tuning because it insufficiently exploits the geometric structure of low-rank manifolds[cite: 73].
+
+\textbf{Key Claims:}
+\begin{itemize}
+    \item \textbf{Algorithmic Claim:} By decomposing the adapter into three factors $U S V^\top$ and constraining the matrices $U$ and $V$ to remain orthogonal (i.e., on the Stiefel manifold) during training, the model can explicitly and efficiently learn the optimal input and output subspaces[cite: 74, 75, 100, 104, 105].
+    \item \textbf{Quantitative Claim:} This geometry-aware optimization (StelLA) consistently outperforms standard LoRA and strong baselines like DoRA across various tasks, such as achieving superior accuracy in image classification and commonsense reasoning, while adding a negligible $r^2$ parameters[cite: 78, 112, 113, 222, 223].
+\end{itemize}
+
+\section{Theoretical Intuition and Sanity Check}
+\textbf{Why does it make sense?}
+A common strategy to improve LoRA is to initialize the $A$ and $B$ matrices using Singular Value Decomposition (SVD) to uncover informative subspaces[cite: 90, 91, 93]. However, this SVD initialization only guides the start of the training[cite: 96]. StelLA ensures that this SVD-like structure is maintained throughout the entire optimization process[cite: 97, 101].
+
+Constraining $U$ and $V$ to the Stiefel manifold $St(r, m)$ (matrices with orthonormal columns) requires Riemannian optimization[cite: 105, 144]. The paper provides a clean, modular way to adapt Euclidean optimizers (like AdamW) by projecting the optimizer's perturbed gradient back onto the tangent space of the manifold, and then using a polar retraction (computed via SVD) to pull the updated weights back onto the manifold[cite: 76, 151, 155, 204, 205, 206]. Intuitively, this separates the ``direction'' of the update (handled by $U$ and $V$) from the ``magnitude'' (handled by $S$), which is known to improve learning[cite: 108, 109].
+
+\section{Relation to Class Concepts}
+This paper connects explicitly to several core concepts covered in the \textit{Training Large Models} lectures:
+\begin{itemize}
+    \item \textbf{Supervised Fine-Tuning (SFT) and PEFT (Lecture 5):} The lectures highlight how PEFT methods like Adapters and LoRA freeze base weights to drastically reduce memory usage while maintaining performance[cite: 830, 837, 841, 843]. StelLA is a direct evolution of these methods, attempting to close the gap with full fine-tuning.
+    \item \textbf{Compute-Memory Trade-offs (Lectures 2 \& 3):} Training LLMs requires balancing FLOPs, memory, and communication[cite: 1891, 1896, 1897]. While StelLA only adds a tiny parameter overhead, its retraction step requires computing the SVD of matrices at each step, representing an $O(mr^2)$ computational complexity[cite: 222, 624, 630]. The paper mitigates this by batching the SVDs, a classic systems-level optimization to keep the GPUs compute-bound[cite: 219, 2880].
+\end{itemize}
+
+\section{Verification Protocol}
+To verify the paper's claims without requiring massive compute resources, we design two complementary experiments that test both the \emph{expressivity} and the \emph{computational cost} of StelLA versus LoRA.
+
+\subsection{Experiment 1: Expressivity Comparison}
+\begin{itemize}
+    \item \textbf{Methodology:} We use a functional expressivity framework that measures how well one architecture family can \emph{fit the outputs} of another. Given two architectural spaces $\mathcal{A}$ and $\mathcal{B}$, we sample random outputs from $\mathcal{A}$ and train models from $\mathcal{B}$ to replicate them (and vice-versa). The fitting loss quantifies the relative expressivity: a lower loss means the fitting architecture can better represent the functions of the other.
+    \item \textbf{Models:} We use tiny Transformers ($d=8$, 2 heads, 1 layer) with LoRA and StelLA adapters at ranks $r \in \{1, 2, 3, 4, 5\}$, as well as full Transformers as a neutral baseline.
+    \item \textbf{Protocol:} For each rank, we run 100 fitting iterations with 50 sub-iterations of gradient descent per attempt, using MSE loss and a batch size of 256.
+    \item \textbf{Two settings:}
+    \begin{enumerate}
+        \item \textbf{Direct comparison:} LoRA fits StelLA outputs and vice-versa.
+        \item \textbf{Baseline comparison:} Both LoRA and StelLA fit the outputs of a full (unconstrained) Transformer.
+    \end{enumerate}
+\end{itemize}
+
+\subsection{Experiment 2: Computational Benchmark}
+\begin{itemize}
+    \item \textbf{Methodology:} We benchmark training cost on a realistically-sized model (768-dim, 12 heads, 12 layers, context 512) at ranks $r \in \{8, 32, 64, 128\}$, measuring per-step time breakdown (forward, backward, optimizer), peak GPU memory, throughput (samples/sec), and memory usage across training phases.
+    \item \textbf{Goal:} Quantify the computational overhead of StelLA's Riemannian retraction step and its impact on memory efficiency.
+\end{itemize}
+
+\section{Results and Interpretation}
+
+\subsection{Expressivity: Direct Comparison (LoRA vs StelLA)}
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/direct_mean_comparison.png}
+        \caption{Mean fitting loss across 100 attempts.}
+        \label{fig:direct_mean}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/direct_min_comparison.png}
+        \caption{Best (min) fitting loss across 100 attempts.}
+        \label{fig:direct_min}
+    \end{subfigure}
+    \caption{Direct expressivity comparison: LoRA vs StelLA. Left panel of each subfigure shows loss vs.\ trainable parameters; right panel shows loss vs.\ wall-clock time.}
+    \label{fig:direct}
+\end{figure}
+
+Figure~\ref{fig:direct} shows the direct comparison results. StelLA consistently achieves \textbf{lower fitting loss} than LoRA across all ranks, both in terms of mean and minimum loss. Key observations:
+
+\begin{itemize}
+    \item \textbf{Parameter efficiency:} At comparable parameter counts (e.g., 128 for LoRA vs.\ 132 for StelLA at rank 1), StelLA achieves a mean loss of $1.58 \times 10^{-3}$ versus $2.15 \times 10^{-3}$ for LoRA---a \textbf{26\% reduction}. The gap narrows at higher ranks but StelLA remains consistently superior: at rank 5 (640 vs.\ 740 parameters), StelLA achieves $1.39 \times 10^{-3}$ vs.\ $1.55 \times 10^{-3}$ for LoRA (\textbf{10\% reduction}).
+    \item \textbf{Minimum loss:} The best-case results are even more striking. StelLA at rank 3 ($9.33 \times 10^{-4}$) already matches or surpasses LoRA at rank 5 ($1.03 \times 10^{-3}$), suggesting that the Stiefel constraint helps the optimizer find better solutions, not just on average but also at the optimum.
+    \item \textbf{Time cost:} The right panels show that StelLA is \textbf{slightly slower} (161--199s vs.\ 155--172s), but the loss improvement more than compensates: StelLA achieves better loss per unit of wall-clock time.
+\end{itemize}
+
+This result directly supports the paper's \textbf{algorithmic claim}: the orthogonality constraint does not merely add parameters---it fundamentally improves the quality of the learned subspaces.
+
+\subsection{Expressivity: Baseline Comparison (vs.\ Full Transformer)}
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/baseline_mean_comparison.png}
+        \caption{Mean fitting loss against Transformer baseline.}
+        \label{fig:baseline_mean}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/baseline_min_comparison.png}
+        \caption{Min fitting loss against Transformer baseline.}
+        \label{fig:baseline_min}
+    \end{subfigure}
+    \caption{Baseline expressivity comparison: LoRA and StelLA both fit the outputs of a full Transformer.}
+    \label{fig:baseline}
+\end{figure}
+
+Figure~\ref{fig:baseline} shows the results when both methods attempt to replicate a full Transformer's outputs. Here the picture is more nuanced:
+
+\begin{itemize}
+    \item \textbf{Both methods converge to similar loss} at higher ranks ($r \geq 3$), with losses clustered around $1.36$--$1.41 \times 10^{-3}$ for mean and $0.93$--$0.96 \times 10^{-3}$ for min. This suggests that at sufficient rank, both LoRA and StelLA can approximate the full Transformer comparably well.
+    \item \textbf{Low-rank regime ($r=1$):} StelLA starts with a higher mean loss ($1.49 \times 10^{-3}$) than LoRA ($1.41 \times 10^{-3}$). This is a mild negative result: at extremely low rank, the Stiefel constraint may be too restrictive when the target space is a full unconstrained Transformer.
+    \item \textbf{High-rank regime ($r=5$):} StelLA recovers its advantage with the best overall mean loss ($1.38 \times 10^{-3}$) and competitive minimum loss ($0.93 \times 10^{-3}$).
+    \item \textbf{Non-monotonicity:} LoRA exhibits an unexpected loss spike at rank 4 (mean $1.44 \times 10^{-3}$), while StelLA's loss curve is smoother and more monotonically decreasing. This supports the claim that Riemannian optimization provides a \textbf{more stable optimization landscape}.
+\end{itemize}
+
+\subsection{Computational Benchmark}
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/benchmark_time_breakdown.png}
+        \caption{Per-step time: forward, backward, and optimizer.}
+        \label{fig:time_breakdown}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/benchmark_throughput.png}
+        \caption{Training throughput (samples/second).}
+        \label{fig:throughput}
+    \end{subfigure}
+    \caption{Computational cost comparison on a 12-layer, 768-dim Transformer.}
+    \label{fig:compute}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/benchmark_peak_memory.png}
+        \caption{Peak GPU memory usage.}
+        \label{fig:peak_memory}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/benchmark_gpu_memory_phases.png}
+        \caption{GPU memory per training phase.}
+        \label{fig:memory_phases}
+    \end{subfigure}
+    \caption{Memory usage comparison across model configurations.}
+    \label{fig:memory}
+\end{figure}
+
+The benchmark results reveal the computational trade-offs of StelLA:
+
+\begin{table}[h]
+\centering
+\caption{Summary of computational metrics. Throughput in samples/sec, peak memory in MB.}
+\label{tab:benchmark}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Configuration} & \textbf{Throughput} & \textbf{Peak Memory} & \textbf{Step Time (ms)} & \textbf{Optim. Overhead} \\
+\midrule
+Full Transformer & 27 & 2309 & 301 & --- \\
+\midrule
+LoRA $r=8$ & 32 & 1661 & 249 & baseline \\
+StelLA $r=8$ & 30 & 1664 & 270 & $+8\%$ total \\
+\midrule
+LoRA $r=32$ & 31 & 2062 & 258 & baseline \\
+StelLA $r=32$ & 27 & 1726 & 298 & $+16\%$ total \\
+\midrule
+LoRA $r=64$ & 29 & 2160 & 277 & baseline \\
+StelLA $r=64$ & 23 & 1809 & 347 & $+25\%$ total \\
+\midrule
+LoRA $r=128$ & 25 & 2353 & 314 & baseline \\
+StelLA $r=128$ & 18 & 1989 & 449 & $+43\%$ total \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Key findings:
+
+\begin{itemize}
+    \item \textbf{Optimizer overhead grows with rank:} The SVD-based polar retraction in StelLA's optimizer step becomes the dominant cost at high ranks. At $r=128$, StelLA's total step time is 449\,ms vs.\ 314\,ms for LoRA, a \textbf{43\% overhead}. The time breakdown (Figure~\ref{fig:time_breakdown}) clearly shows that forward and backward passes are nearly identical---the entire overhead comes from the optimizer step, which grows from $\sim$25\,ms (LoRA) to $\sim$140\,ms (StelLA) at $r=128$.
+    \item \textbf{Memory advantage for StelLA:} Surprisingly, StelLA uses \textbf{less peak memory} than LoRA at ranks $\geq 32$, with savings of up to 16\% at $r=32$ (1726 vs.\ 2062\,MB) and 15\% at $r=128$ (1989 vs.\ 2353\,MB). This is because StelLA's optimizer maintains states only for the smaller $S$ matrix in the Euclidean space, while the Stiefel parameters ($U$, $V$) require less optimizer state. Figure~\ref{fig:memory_phases} confirms that the memory savings occur primarily in the ``after forward'' phase, indicating reduced activation memory.
+    \item \textbf{At low rank, overhead is negligible:} At $r=8$, StelLA is only 8\% slower than LoRA (270 vs.\ 249\,ms) with virtually identical peak memory (1664 vs.\ 1661\,MB). This aligns with the paper's claim that the $O(mr^2)$ retraction cost is negligible for small $r$.
+\end{itemize}
+
+This analysis connects directly to the \textbf{compute-memory trade-off} concepts from Lectures 2--3: StelLA trades wall-clock time (higher FLOP cost per step) for better memory efficiency and, as shown in the expressivity experiments, better convergence quality per parameter.
+
+\subsection{Negative Results and Stress Tests}
+
+Our experiments also reveal important limitations:
+
+\begin{enumerate}
+    \item \textbf{Baseline comparison is noisy:} When fitting against a full Transformer (Figure~\ref{fig:baseline}), StelLA does not uniformly dominate LoRA. At $r=1$, LoRA outperforms StelLA by 5\% in mean loss. This suggests the Stiefel constraint may hurt when the rank is too small relative to the target complexity, as the manifold becomes too restrictive.
+    \item \textbf{Throughput degradation at high rank:} StelLA's throughput drops to 18 samples/sec at $r=128$, which is 28\% slower than LoRA and 33\% slower than full fine-tuning. For practitioners with strict latency budgets, this overhead may not be acceptable, especially since the paper's main use case targets small ranks ($r \leq 16$).
+    \item \textbf{Non-monotonic loss curves:} Both LoRA and StelLA exhibit non-monotonic behavior in the baseline comparison (Figure~\ref{fig:baseline_mean}), with LoRA spiking at $r=4$. This suggests that at small model scales, the expressivity landscape is not smooth, and results should be interpreted with caution.
+\end{enumerate}
+
+\section{Conclusion}
+Through two complementary experiments---an expressivity comparison and a computational benchmark---we verified the core claims of the StelLA paper:
+
+\begin{enumerate}
+    \item \textbf{Algorithmic claim (verified):} The Stiefel manifold constraint genuinely improves the quality of learned subspaces. In the direct comparison, StelLA achieves 10--26\% lower fitting loss than LoRA at equivalent parameter budgets, confirming that orthogonality maintenance during training is beneficial.
+    \item \textbf{Quantitative claim (partially verified):} StelLA's computational overhead is concentrated in the optimizer step ($O(mr^2)$ SVD retraction) and scales significantly with rank (8\% at $r=8$ to 43\% at $r=128$). However, StelLA unexpectedly offers better memory efficiency at higher ranks (up to 16\% less peak memory), a practical advantage not emphasized in the original paper.
+    \item \textbf{Nuance:} The advantage is most clear-cut in the direct comparison setting and at moderate ranks. In the baseline comparison against a full Transformer, both methods converge to similar expressivity at sufficient rank, with StelLA providing a more stable optimization trajectory but not a dramatic improvement.
+\end{enumerate}
+
+Overall, our results confirm that StelLA's Riemannian approach to PEFT is well-motivated: it offers a principled expressivity gain at a manageable computational cost, especially at the low-rank regime where LoRA-style methods are typically deployed.
+
+\end{document}
