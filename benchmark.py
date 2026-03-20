@@ -14,12 +14,12 @@ import tracemalloc
 from dataclasses import dataclass, field
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
-
 from models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
+from torch import nn
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ def bench_model(name, model, optimizer, rank=None):
     total = sum(p.numel() for p in model.parameters())
     opt_state_bytes = trainable * 2 * 4
 
-    # Warmup
+    # Warm up
     for _ in range(WARMUP_STEPS):
         optimizer.zero_grad()
         out = model(x)

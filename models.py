@@ -1,20 +1,19 @@
-import sys
 import os
+import sys
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 # nanoGPT is not a proper Python package (no __init__.py / pyproject.toml),
 # so we add it to sys.path to import its model module.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nanoGPT"))
-from model import GPTConfig, Block, LayerNorm
-
-# stella is installed via: uv add "stella @ git+https://github.com/SonyResearch/stella"
-from stella import StellaConfig
+from model import Block, GPTConfig, LayerNorm
 
 # peft is installed via: uv add peft
 from peft import LoraConfig, get_peft_model
 
+# stella is installed via: uv add "stella @ git+https://github.com/SonyResearch/stella"
+from stella import StellaConfig
 
 # ── Base Transformer using nanoGPT blocks ────────────────────────────────────
 
