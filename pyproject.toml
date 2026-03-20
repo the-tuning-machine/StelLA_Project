@@ -89,7 +89,7 @@ testpaths = ["src", "tests"]
 xfail_strict = true
 
 [tool.ruff]  # https://docs.astral.sh/ruff/settings/
-extend-exclude = ["nanoGPT", "*.ipynb"]
+extend-exclude = ["nanoGPT"]
 fix = true
 line-length = 100
 src = ["src", "tests", "scripts"]

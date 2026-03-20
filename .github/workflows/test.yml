@@ -35,6 +35,11 @@ jobs:
         run: |
           uv sync --python ${{ matrix.python-version }} --resolution ${{ matrix.resolution-strategy }} --all-extras
 
+      - name: Check Markdown and secrets
+        run: |
+          uv run pre-commit run markdownlint-cli2 --all-files
+          uv run pre-commit run gitleaks --all-files
+
       - name: Lint package
         run: uv run poe lint
 

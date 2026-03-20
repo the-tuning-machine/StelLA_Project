@@ -282,7 +282,6 @@ def plot_time_breakdown(results: list[BenchResult]) -> None:
     LOGGER.info("  -> Saved benchmark_time_breakdown.png")
 
 
-
 def plot_gpu_memory_phases(results: list[BenchResult]) -> None:
     """Per-phase memory footprint: before fwd, after fwd, after bwd, after step."""
     if not USE_GPU:
@@ -325,7 +324,6 @@ def plot_gpu_memory_phases(results: list[BenchResult]) -> None:
     LOGGER.info("  -> Saved benchmark_gpu_memory_phases.png")
 
 
-
 def plot_throughput_comparison(results: list[BenchResult]) -> None:
     """Bar chart comparing throughput (samples/s) across models."""
     labels = [f"{r.name}\nr={r.rank}" if r.rank else r.name for r in results]
@@ -333,8 +331,9 @@ def plot_throughput_comparison(results: list[BenchResult]) -> None:
     colors = {"Transformer": "#4C72B0", "LoRA": "#DD8452", "StelLA": "#55A868"}
 
     fig, ax = plt.subplots(figsize=(max(8, len(results) * 0.8), 5))
-    bars = ax.bar(range(len(results)), throughputs,
-                  color=[colors.get(r.name, "#999999") for r in results])
+    bars = ax.bar(
+        range(len(results)), throughputs, color=[colors.get(r.name, "#999999") for r in results]
+    )
     ax.set_xticks(range(len(results)))
     ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylabel("Samples / second")
@@ -342,8 +341,14 @@ def plot_throughput_comparison(results: list[BenchResult]) -> None:
 
     # Add value labels on bars
     for bar, val in zip(bars, throughputs, strict=True):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{val:.0f}", ha="center", va="bottom", fontsize=7)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{val:.0f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
 
     fig.tight_layout()
     fig.savefig("benchmark_throughput.png", dpi=150)
@@ -358,16 +363,23 @@ def plot_peak_memory(results: list[BenchResult]) -> None:
     colors = {"Transformer": "#4C72B0", "LoRA": "#DD8452", "StelLA": "#55A868"}
 
     fig, ax = plt.subplots(figsize=(max(8, len(results) * 0.8), 5))
-    bars = ax.bar(range(len(results)), peak_mb,
-                  color=[colors.get(r.name, "#999999") for r in results])
+    bars = ax.bar(
+        range(len(results)), peak_mb, color=[colors.get(r.name, "#999999") for r in results]
+    )
     ax.set_xticks(range(len(results)))
     ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylabel("Peak Memory (MB)")
     ax.set_title(f"Peak {'GPU' if USE_GPU else 'RSS'} Memory")
 
     for bar, val in zip(bars, peak_mb, strict=True):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                f"{val:.1f}", ha="center", va="bottom", fontsize=7)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{val:.1f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
 
     fig.tight_layout()
     fig.savefig("benchmark_peak_memory.png", dpi=150)
@@ -439,7 +451,9 @@ def main() -> None:
         stella = next(r for r in results if r.name == "StelLA" and r.rank == rank)
         step_overhead = (stella.avg_step_ms - lora.avg_step_ms) / lora.avg_step_ms * 100
         total_overhead = (stella.avg_total_ms - lora.avg_total_ms) / lora.avg_total_ms * 100
-        mem_overhead = (stella.peak_memory_bytes - lora.peak_memory_bytes) / lora.peak_memory_bytes * 100
+        mem_overhead = (
+            (stella.peak_memory_bytes - lora.peak_memory_bytes) / lora.peak_memory_bytes * 100
+        )
         LOGGER.info(
             "  rank=%d: step %+0.1f%%, total %+0.1f%%, peak mem %+0.1f%%",
             rank,

@@ -47,6 +47,14 @@ repos:
     rev: 0.9.1
     hooks:
       - id: nbstripout
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.18.1
+    hooks:
+      - id: markdownlint-cli2
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
   - repo: local
     hooks:
       - id: commitizen
@@ -62,8 +70,15 @@ repos:
         args: ["--force-exclude", "--extend-fixable=ERA001,F401,F841,T201,T203"]
         require_serial: true
         language: system
-        files: ^(src|tests)/
+        files: ^(src|tests|scripts)/
         types_or: [python, pyi]
+      - id: ruff-check-notebooks
+        name: ruff check notebooks
+        entry: uv run --no-sync ruff check
+        args: [--force-exclude]
+        require_serial: true
+        language: system
+        files: ^notebooks/.*\.ipynb$
       - id: codespell
         name: codespell
         entry: uv run --no-sync codespell
@@ -76,12 +91,12 @@ repos:
         args: [--force-exclude]
         require_serial: true
         language: system
-        files: ^(src|tests)/
+        files: ^(src|tests|scripts)/
         types_or: [python, pyi]
       - id: ty
         name: ty
         entry: uv run --no-sync ty check
         require_serial: true
         language: system
-        files: ^(src|tests)/
+        files: ^(src|tests|scripts)/
         types_or: [python, pyi]

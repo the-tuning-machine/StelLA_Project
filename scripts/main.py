@@ -42,6 +42,7 @@ def _log_result(result: object) -> None:
     """Emit comparison results for interactive runs."""
     LOGGER.info("%s", result)
 
+
 lora_space = ArchitecturalSpace(
     INPUT_SIZE,
     "LoRA",
