@@ -1,19 +1,20 @@
-import os
+"""Model definitions used by the local comparison and benchmarking scripts."""
+
 import sys
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any, Protocol, cast
 
 import torch
+from peft import LoraConfig, get_peft_model
 from torch import nn
+
+from stella import StellaConfig
 
 # nanoGPT is not a proper Python package (no __init__.py / pyproject.toml),
 # so we add it to sys.path to import its model module.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nanoGPT"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "nanoGPT"))
 from model import Block, GPTConfig, LayerNorm
-
-# peft is installed via: uv add peft
-from peft import LoraConfig, get_peft_model
-
-# stella is installed via: uv add "stella @ git+https://github.com/SonyResearch/stella"
-from stella import StellaConfig
 
 # ── Base Transformer using nanoGPT blocks ────────────────────────────────────
 
@@ -21,7 +22,9 @@ from stella import StellaConfig
 class Transformer(nn.Module):
     """nanoGPT transformer backbone (continuous input, no embeddings)."""
 
-    def __init__(self, n_embd=8, n_head=2, n_layer=1, block_size=16, **kwargs):
+    def __init__(
+        self, n_embd: int = 8, n_head: int = 2, n_layer: int = 1, block_size: int = 16, **_: object
+    ) -> None:
         super().__init__()
         config = GPTConfig(
             n_embd=n_embd,
@@ -35,7 +38,8 @@ class Transformer(nn.Module):
         self.blocks = nn.ModuleList([Block(config) for _ in range(n_layer)])
         self.ln_f = LayerNorm(n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the transformer blocks to a batch of continuous inputs."""
         for block in self.blocks:
             x = block(x)
         return self.ln_f(x)
@@ -47,18 +51,25 @@ class Transformer(nn.Module):
 class LoRATransformer(nn.Module):
     """nanoGPT transformer with PEFT LoRA on attention & MLP projections."""
 
-    def __init__(self, n_embd=8, n_head=2, n_layer=1, block_size=16, rank=4, alpha=1, **kwargs):
+    def __init__(  # noqa: PLR0913
+        self,
+        n_embd: int = 8,
+        n_head: int = 2,
+        n_layer: int = 1,
+        block_size: int = 16,
+        rank: int = 4,
+        alpha: int = 1,
+        **_: object,
+    ) -> None:
         super().__init__()
         base = Transformer(n_embd=n_embd, n_head=n_head, n_layer=n_layer, block_size=block_size)
         lora_config = LoraConfig(
-            r=rank,
-            lora_alpha=alpha,
-            target_modules=["c_attn", "c_proj", "c_fc"],
-            bias="none",
+            r=rank, lora_alpha=alpha, target_modules=["c_attn", "c_proj", "c_fc"], bias="none"
         )
-        self.model = get_peft_model(base, lora_config)
+        self.model = get_peft_model(cast("Any", base), lora_config)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the LoRA-adapted model on a batch of inputs."""
         return self.model(x)
 
 
@@ -68,7 +79,16 @@ class LoRATransformer(nn.Module):
 class StelLATransformer(nn.Module):
     """nanoGPT transformer with StelLA adaptation on attention & MLP projections."""
 
-    def __init__(self, n_embd=8, n_head=2, n_layer=1, block_size=16, rank=4, alpha=1, **kwargs):
+    def __init__(  # noqa: PLR0913
+        self,
+        n_embd: int = 8,
+        n_head: int = 2,
+        n_layer: int = 1,
+        block_size: int = 16,
+        rank: int = 4,
+        alpha: int = 1,
+        **_: object,
+    ) -> None:
         super().__init__()
         base = Transformer(n_embd=n_embd, n_head=n_head, n_layer=n_layer, block_size=block_size)
         stella_config = StellaConfig(
@@ -79,17 +99,28 @@ class StelLATransformer(nn.Module):
             stella_grad_scaling=float(n_embd),
             stella_retraction="exp_map",
         )
-        self.model = get_peft_model(base, stella_config)
+        self.model = get_peft_model(cast("Any", base), stella_config)
         # Register the StellaModel so the optimizer hooks can find it.
         # This works because expressivity creates the model, then immediately
         # creates the optimizer from model.parameters().
-        StelLAAdamW._current_stella_model = self.model
+        StelLAAdamW.set_current_stella_model(cast(_StellaHookModel, self.model))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the StelLA-adapted model on a batch of inputs."""
         return self.model(x)
 
 
 # ── Optimizer with Stiefel hooks for StelLA ──────────────────────────────────
+
+
+class _StellaHookModel(Protocol):
+    """Protocol for models exposing StelLA optimizer hook methods."""
+
+    def pre_optimizer_step(self) -> None:
+        """Run before the optimizer step."""
+
+    def post_optimizer_step(self) -> None:
+        """Run after the optimizer step."""
 
 
 class StelLAAdamW(torch.optim.AdamW):
@@ -100,15 +131,20 @@ class StelLAAdamW(torch.optim.AdamW):
     We intercept this to find the StellaModel and register the hooks.
     """
 
-    def __init__(self, params, lr=0.001, **kwargs):
-        super().__init__(list(params), lr=lr, **kwargs)
+    _current_stella_model: _StellaHookModel | None = None
+
+    @classmethod
+    def set_current_stella_model(cls, model: _StellaHookModel) -> None:
+        """Store the current StelLA model so hooks can be attached during optimizer init."""
+        cls._current_stella_model = model
+
+    def __init__(self, params: Iterable[torch.nn.Parameter], lr: float = 0.001) -> None:
+        super().__init__(list(params), lr=lr)
         stella_model = StelLAAdamW._current_stella_model
         if stella_model is not None:
             self.register_step_pre_hook(
-                lambda opt, args, kwargs: stella_model.pre_optimizer_step()
+                lambda _opt, _args, _kwargs: stella_model.pre_optimizer_step()
             )
             self.register_step_post_hook(
-                lambda opt, args, kwargs: stella_model.post_optimizer_step()
+                lambda _opt, _args, _kwargs: stella_model.post_optimizer_step()
             )
-
-    _current_stella_model = None

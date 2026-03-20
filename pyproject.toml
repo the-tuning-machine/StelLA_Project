@@ -89,6 +89,7 @@ testpaths = ["src", "tests"]
 xfail_strict = true
 
 [tool.ruff]  # https://docs.astral.sh/ruff/settings/
+extend-exclude = ["nanoGPT"]
 fix = true
 line-length = 100
 src = ["src", "tests"]
@@ -120,6 +121,17 @@ convention = "numpy"
 
 [tool.ty.environment]
 python-platform = "all"
+
+[tool.ty.src]
+include = ["src", "tests", "benchmark.py", "main.py", "models.py"]
+exclude = ["nanoGPT/**"]
+
+[[tool.ty.overrides]]
+include = ["models.py"]
+
+[tool.ty.overrides.analysis]
+allowed-unresolved-imports = ["model"]
+replace-imports-with-any = ["model"]
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"
