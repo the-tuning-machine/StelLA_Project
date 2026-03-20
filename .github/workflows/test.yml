@@ -23,24 +23,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 23
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install @devcontainers/cli
-        run: npm install --location=global @devcontainers/cli@0.76.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
 
-      - name: Start Dev Container
+      - name: Sync dependencies
         run: |
-          git config --global init.defaultBranch main
-          devcontainer up --workspace-folder .
-        env:
-          PYTHON_VERSION: ${{ matrix.python-version }}
-          RESOLUTION_STRATEGY: ${{ matrix.resolution-strategy }}
+          uv sync --python ${{ matrix.python-version }} --resolution ${{ matrix.resolution-strategy }} --all-extras
 
       - name: Lint package
-        run: devcontainer exec --workspace-folder . poe lint
+        run: uv run poe lint
 
       - name: Test package
-        run: devcontainer exec --workspace-folder . poe test
+        run: uv run poe test
