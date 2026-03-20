@@ -24,7 +24,7 @@ dependencies = [
 stella = { git = "https://github.com/SonyResearch/stella" }
 
 [build-system]  # https://docs.astral.sh/uv/concepts/build-backend/
-requires = ["uv_build>=0.9.18,<0.10.0"]
+requires = ["uv_build>=0.9.18,<0.11.0"]
 build-backend = "uv_build"
 
 [project.urls]  # https://packaging.python.org/en/latest/specifications/well-known-project-urls/#well-known-labels
