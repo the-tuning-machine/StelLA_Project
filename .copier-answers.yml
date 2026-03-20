@@ -1,0 +1,15 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v2.0.0
+_src_path: https://github.com/superlinear-ai/substrate.git
+project_type: package
+project_name: stellatscale
+project_description: 'MVA course project: experimental validation of key claims in
+  _StelLA: Subspace Learning in Low-Rank Adaptation using Stiefel Manifold_, with
+  controlled small-scale experiments.'
+project_url: https://github.com/the-tuning-machine/SteLA_Project.git
+author_name: Gary Klajer
+author_email: gary.klajer@outlook.com
+python_version: '3.12'
+typing: strict
+with_conventional_commits: true
+with_typer_cli: false
