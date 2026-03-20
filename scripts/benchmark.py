@@ -17,9 +17,10 @@ from dataclasses import dataclass, field
 import matplotlib as mpl
 import torch
 from matplotlib import pyplot as plt
-from models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
 from torch import nn
 from torch.optim import Optimizer
+
+from models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
 
 mpl.use("Agg")
 

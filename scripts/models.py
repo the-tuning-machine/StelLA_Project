@@ -13,7 +13,7 @@ from stella import StellaConfig
 
 # nanoGPT is not a proper Python package (no __init__.py / pyproject.toml),
 # so we add it to sys.path to import its model module.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "nanoGPT"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "nanoGPT"))
 from model import Block, GPTConfig, LayerNorm
 
 # ── Base Transformer using nanoGPT blocks ────────────────────────────────────
@@ -103,7 +103,7 @@ class StelLATransformer(nn.Module):
         # Register the StellaModel so the optimizer hooks can find it.
         # This works because expressivity creates the model, then immediately
         # creates the optimizer from model.parameters().
-        StelLAAdamW.set_current_stella_model(cast(_StellaHookModel, self.model))
+        StelLAAdamW.set_current_stella_model(cast("_StellaHookModel", self.model))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Run the StelLA-adapted model on a batch of inputs."""

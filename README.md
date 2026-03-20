@@ -22,6 +22,26 @@ import stellatscale
 ...
 ```
 
+## Repository Layout
+
+- `src/stellatscale`: installable package code
+- `tests`: test suite
+- `scripts`: runnable research and benchmarking scripts
+- `notebooks`: exploratory notebooks
+- `deliverables`: paper, poster, and report sources
+- `docs`: MkDocs content
+
+## Research Scripts
+
+Run the comparison and benchmark scripts from the repository root:
+
+```sh
+uv run python scripts/main.py
+uv run python scripts/benchmark.py
+```
+
+The notebook used for exploration lives at `notebooks/notebook.ipynb`.
+
 ## Contributing
 
 <details>

@@ -50,7 +50,9 @@ data/
 # Jupyter
 *.ipynb
 .ipynb_checkpoints/
-notebooks/
+!notebooks/
+notebooks/*
+!notebooks/notebook.ipynb
 
 # macOS
 .DS_Store
