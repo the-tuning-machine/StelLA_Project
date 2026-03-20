@@ -27,6 +27,7 @@ import stellatscale
 - `src/stellatscale`: installable package code
 - `tests`: test suite
 - `scripts`: runnable research and benchmarking scripts
+- `third_party`: vendored external code and git submodules
 - `notebooks`: exploratory notebooks
 - `deliverables`: paper, poster, and report sources
 - `docs`: MkDocs content
@@ -36,8 +37,9 @@ import stellatscale
 Run the comparison and benchmark scripts from the repository root:
 
 ```sh
-uv run python scripts/main.py
-uv run python scripts/benchmark.py
+uv run poe bench
+uv run python -m scripts.bench_efficiency
+uv run python -m scripts.bench_expressivity
 ```
 
 The notebook used for exploration lives at `notebooks/notebook.ipynb`.
@@ -77,6 +79,13 @@ The following development environments are supported:
 1. ⭐️ _uv_: clone this repository and run the following from root of the repository:
 
     ```sh
+    # Preferred clone flow
+    git clone --recurse-submodules git@github.com:the-tuning-machine/SteLA_Project.git
+    cd SteLA_Project
+
+    # If the repository was cloned without submodules, fetch the vendored nanoGPT submodule
+    git submodule update --init --recursive
+
     # Create and install a virtual environment
     uv sync --python 3.12 --all-extras
 
@@ -86,6 +95,8 @@ The following development environments are supported:
     # Install the pre-commit hooks
     pre-commit install --install-hooks
     ```
+
+    The benchmark and research scripts depend on the vendored `third_party/nanoGPT` submodule, so either clone with `--recurse-submodules` or run `git submodule update --init --recursive` after cloning.
 
 1. _VS Code Dev Container_: clone this repository, open it with VS Code, and run <kbd>Ctrl/⌘</kbd> + <kbd>⇧</kbd> + <kbd>P</kbd> → _Dev Containers: Reopen in Container_.
 1. _PyCharm Dev Container_: clone this repository, open it with PyCharm, [create a Dev Container with Mount Sources](https://www.jetbrains.com/help/pycharm/start-dev-container-inside-ide.html), and [configure an existing Python interpreter](https://www.jetbrains.com/help/pycharm/configuring-python-interpreter.html#widget) at `/opt/venv/bin/python`.

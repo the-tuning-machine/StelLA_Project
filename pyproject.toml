@@ -59,7 +59,7 @@ dev = [
 [tool.codespell]  # https://github.com/codespell-project/codespell
 builtin = "en-GB_to_en-US,clear,code,rare"
 check-filenames = true
-skip = "./*_cache/,./.venv,./reports,./*.ipynb,./*.pdf"
+skip = "./*_cache/,./.venv,./reports,./*.ipynb,./*.pdf,./third_party/nanoGPT"
 
 [tool.commitizen]  # https://commitizen-tools.github.io/commitizen/config/
 bump_message = "bump: v$current_version → v$new_version"
@@ -89,7 +89,7 @@ testpaths = ["src", "tests"]
 xfail_strict = true
 
 [tool.ruff]  # https://docs.astral.sh/ruff/settings/
-extend-exclude = ["nanoGPT"]
+extend-exclude = ["third_party/nanoGPT"]
 fix = true
 line-length = 100
 src = ["src", "tests", "scripts"]
@@ -124,10 +124,10 @@ python-platform = "all"
 
 [tool.ty.src]
 include = ["src", "tests", "scripts"]
-exclude = ["nanoGPT/**"]
+exclude = ["third_party/nanoGPT/**"]
 
 [[tool.ty.overrides]]
-include = ["scripts/models.py"]
+include = ["src/stellatscale/models.py"]
 
 [tool.ty.overrides.analysis]
 allowed-unresolved-imports = ["model"]
@@ -180,3 +180,13 @@ type = "simple"
 
     [[tool.poe.tasks.test.sequence]]
     cmd = "coverage xml"
+
+
+  [tool.poe.tasks.bench]
+  help = "Run all benchmarks (efficiency and expressivity)"
+
+    [[tool.poe.tasks.bench.sequence]]
+    cmd = "python -m scripts.bench_efficiency"
+
+    [[tool.poe.tasks.bench.sequence]]
+    cmd = "python -m scripts.bench_expressivity"

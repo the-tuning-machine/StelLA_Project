@@ -20,7 +20,7 @@ from matplotlib import pyplot as plt
 from torch import nn
 from torch.optim import Optimizer
 
-from models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
+from stellatscale.models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
 
 mpl.use("Agg")
 

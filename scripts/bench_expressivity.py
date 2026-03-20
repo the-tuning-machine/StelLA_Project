@@ -7,7 +7,7 @@ from typing import Any, cast
 from expressivity import ArchitecturalSpace, ArchitectureComparator
 from torch import nn
 
-from models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
+from stellatscale.models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
 
 # ── Shared architecture hyper-parameters (tiny) ─────────────────────────────
 
