@@ -85,16 +85,12 @@ transformer_space = ArchitecturalSpace(
 # 1. LoRA vs StelLA (direct)
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 comparator_direct = ArchitectureComparator(lora_space, stella_space)
-res1 = comparator_direct.compare(
-    1000, 5, save_path=str(RESULTS_DIR / "direct_comparison"), monitor=True
-)
+res1 = comparator_direct.compare(1000, 5, save_path=str(RESULTS_DIR / "direct_comparison"))
 _log_result(res1)
 comparator_direct.plot("mean")
 
 # 2. LoRA vs StelLA with Transformer as neutral baseline
 comparator_baseline = ArchitectureComparator(lora_space, stella_space, transformer_space)
-res2 = comparator_baseline.compare(
-    1000, 5, save_path=str(RESULTS_DIR / "transformer_baseline"), monitor=True
-)
+res2 = comparator_baseline.compare(1000, 5, save_path=str(RESULTS_DIR / "transformer_baseline"))
 _log_result(res2)
 comparator_baseline.plot("mean")
