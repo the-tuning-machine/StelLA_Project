@@ -59,7 +59,7 @@ dev = [
 [tool.codespell]  # https://github.com/codespell-project/codespell
 builtin = "en-GB_to_en-US,clear,code,rare"
 check-filenames = true
-skip = "./*_cache/,./.venv,./reports,./*.ipynb,./*.pdf,./third_party/nanoGPT"
+skip = "./*_cache/,./.venv,./reports,./*.ipynb,./*.pdf"
 
 [tool.commitizen]  # https://commitizen-tools.github.io/commitizen/config/
 bump_message = "bump: v$current_version → v$new_version"
@@ -89,7 +89,6 @@ testpaths = ["src", "tests"]
 xfail_strict = true
 
 [tool.ruff]  # https://docs.astral.sh/ruff/settings/
-extend-exclude = ["third_party/nanoGPT"]
 fix = true
 line-length = 100
 src = ["src", "tests", "scripts"]
@@ -124,14 +123,6 @@ python-platform = "all"
 
 [tool.ty.src]
 include = ["src", "tests", "scripts"]
-exclude = ["third_party/nanoGPT/**"]
-
-[[tool.ty.overrides]]
-include = ["src/stellatscale/models.py"]
-
-[tool.ty.overrides.analysis]
-allowed-unresolved-imports = ["model"]
-replace-imports-with-any = ["model"]
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"

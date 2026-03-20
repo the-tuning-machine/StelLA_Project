@@ -1,3 +1,0 @@
-[submodule "nanoGPT"]
-	path = third_party/nanoGPT
-	url = https://github.com/karpathy/nanoGPT

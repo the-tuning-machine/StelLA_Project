@@ -1,8 +1,6 @@
 """Model definitions used by the local comparison and benchmarking scripts."""
 
-import sys
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Any, Protocol, cast
 
 import torch
@@ -10,10 +8,7 @@ from peft import LoraConfig, get_peft_model
 from stella import StellaConfig
 from torch import nn
 
-# nanoGPT is not a proper Python package (no __init__.py / pyproject.toml),
-# so we add it to sys.path to import its model module.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "third_party" / "nanoGPT"))
-from model import Block, GPTConfig, LayerNorm
+from stellatscale._nanogpt_backbone import Block, GPTConfig, LayerNorm
 
 # ── Base Transformer using nanoGPT blocks ────────────────────────────────────
 

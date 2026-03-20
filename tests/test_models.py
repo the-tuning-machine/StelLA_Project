@@ -5,6 +5,7 @@ from pytest_mock import MockerFixture
 from torch import nn
 
 from stellatscale import models
+from stellatscale._nanogpt_backbone import Block, GPTConfig, LayerNorm
 
 
 def test_transformer_forward_shape() -> None:
@@ -56,3 +57,25 @@ def test_stella_optimizer_hooks_execute() -> None:
 
     assert hook_model.pre_calls == 1
     assert hook_model.post_calls == 1
+
+
+def test_internalized_nanogpt_block_preserves_shape() -> None:
+    """The internalized nanoGPT-derived block should preserve tensor shape."""
+    config = GPTConfig(n_embd=8, n_head=2, n_layer=1, block_size=16, dropout=0.0, bias=False)
+    block = Block(config)
+    inputs = torch.randn(2, 5, 8)
+
+    outputs = block(inputs)
+
+    assert outputs.shape == inputs.shape
+
+
+def test_internalized_layer_norm_without_bias() -> None:
+    """The copied LayerNorm should support the bias-free configuration used in the project."""
+    layer_norm = LayerNorm(8, bias=False)
+    inputs = torch.randn(2, 5, 8)
+
+    outputs = layer_norm(inputs)
+
+    assert outputs.shape == inputs.shape
+    assert layer_norm.bias is None
