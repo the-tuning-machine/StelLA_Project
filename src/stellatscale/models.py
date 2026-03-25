@@ -104,6 +104,34 @@ class StelLATransformer(nn.Module):
         return self.model(x)
 
 
+# ── Euclidean Three-Factor Transformer (ablation: same USV^T, no Stiefel) ────
+
+
+class EuclideanThreeFactorTransformer(nn.Module):
+    """Same three-factor decomposition USV^T as StelLA, but trained with
+    standard AdamW (no Riemannian hooks). U and V start orthogonal but
+    are free to drift during training. This isolates the effect of the
+    Stiefel geometry from the parameterization."""
+
+    def __init__(self, n_embd=8, n_head=2, n_layer=1, block_size=16, rank=4, alpha=1, **kwargs):
+        super().__init__()
+        base = Transformer(n_embd=n_embd, n_head=n_head, n_layer=n_layer, block_size=block_size)
+        stella_config = StellaConfig(
+            r=rank,
+            lora_alpha=alpha,
+            target_modules=["c_attn", "c_proj", "c_fc"],
+            bias="none",
+            stella_grad_scaling=float(n_embd),
+            stella_retraction="exp_map",
+        )
+        self.model = get_peft_model(base, stella_config)
+        # NOTE: We do NOT set StelLAAdamW._current_stella_model here.
+        # This model will be used with standard AdamW, so no hooks.
+
+    def forward(self, x):
+        return self.model(x)
+
+
 # ── Optimizer with Stiefel hooks for StelLA ──────────────────────────────────
 
 

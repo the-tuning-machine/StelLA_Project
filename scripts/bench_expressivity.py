@@ -1,20 +1,13 @@
-"""Run small-scale architecture comparisons for LoRA, StelLA, and a baseline transformer."""
-
-import logging
-from pathlib import Path
-from typing import Any, cast
-
 from expressivity import ArchitecturalSpace, ArchitectureComparator
-from torch import nn
-
-from stellatscale.models import LoRATransformer, StelLAAdamW, StelLATransformer, Transformer
+from stellatscale.models import LoRATransformer, StelLATransformer, StelLAAdamW, Transformer
+import os
 
 # ── Shared architecture hyper-parameters (tiny) ─────────────────────────────
 
 N_EMBD = 8
 N_HEAD = 2
 BLOCK_SIZE = 16
-N_LAYER = 3
+N_LAYER = 1
 INPUT_SIZE = (5, N_EMBD)  # (seq_len, n_embd)
 RANKS = [i + 1 for i in range(5)]
 
@@ -29,68 +22,44 @@ transformer_params = [base_kwargs for _ in RANKS]
 # ── Architectural spaces ─────────────────────────────────────────────────────
 
 BATCH_SIZE = 256
-RESULTS_DIR = Path.cwd() / "results"
-LOGGER = logging.getLogger(__name__)
-
-
-def _architecture(model_cls: type[nn.Module]) -> nn.Module:
-    """Return a class object cast to the runtime type expected by expressivity."""
-    return cast("Any", model_cls)
-
-
-def _log_result(result: object) -> None:
-    """Emit comparison results for interactive runs."""
-    LOGGER.info("%s", result)
-
 
 lora_space = ArchitecturalSpace(
-    INPUT_SIZE,
-    "LoRA",
-    _architecture(LoRATransformer),
-    lora_params,
-    epoch=20,
-    lr=0.01,
-    automatic_mesurement_mode="parameters",
-    batch_size=BATCH_SIZE,
-    automatic_batch_size_scale=None,
+    INPUT_SIZE, "LoRA", LoRATransformer, lora_params,
+    epoch=20, lr=0.01, automatic_mesurement_mode="parameters",
+    batch_size=BATCH_SIZE, automatic_batch_size_scale=None,
 )
 
 stella_space = ArchitecturalSpace(
-    INPUT_SIZE,
-    "StelLA",
-    _architecture(StelLATransformer),
-    stella_params,
-    epoch=20,
-    lr=0.01,
-    automatic_mesurement_mode="parameters",
-    batch_size=BATCH_SIZE,
-    automatic_batch_size_scale=None,
+    INPUT_SIZE, "StelLA", StelLATransformer, stella_params,
+    epoch=20, lr=0.01, automatic_mesurement_mode="parameters",
+    batch_size=BATCH_SIZE, automatic_batch_size_scale=None,
     optimizer=StelLAAdamW,
 )
 
 transformer_space = ArchitecturalSpace(
-    INPUT_SIZE,
-    "Transformer",
-    _architecture(Transformer),
-    transformer_params,
-    epoch=20,
-    lr=0.01,
-    automatic_mesurement_mode="parameters",
-    batch_size=BATCH_SIZE,
-    automatic_batch_size_scale=None,
+    INPUT_SIZE, "Transformer", Transformer, transformer_params,
+    epoch=20, lr=0.01, automatic_mesurement_mode="parameters",
+    batch_size=BATCH_SIZE, automatic_batch_size_scale=None,
 )
 
 # ── Comparisons ──────────────────────────────────────────────────────────────
 
 # 1. LoRA vs StelLA (direct)
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 comparator_direct = ArchitectureComparator(lora_space, stella_space)
-res1 = comparator_direct.compare(1000, 5, save_path=str(RESULTS_DIR / "direct_comparison"))
-_log_result(res1)
+res1 = comparator_direct.compare(
+    1000, 
+    5, 
+    save_path=os.path.join(os.getcwd(), "results", "direct_comparison")
+)
+print(res1)
 comparator_direct.plot("mean")
 
 # 2. LoRA vs StelLA with Transformer as neutral baseline
 comparator_baseline = ArchitectureComparator(lora_space, stella_space, transformer_space)
-res2 = comparator_baseline.compare(1000, 5, save_path=str(RESULTS_DIR / "transformer_baseline"))
-_log_result(res2)
+res2 = comparator_baseline.compare(
+    1000, 
+    5, 
+    save_path=os.path.join(os.getcwd(), "results", "transformer_baseline")
+)
+print(res2)
 comparator_baseline.plot("mean")
