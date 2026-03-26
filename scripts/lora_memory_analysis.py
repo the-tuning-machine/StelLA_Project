@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from contextlib import contextmanager, redirect_stdout
@@ -18,6 +19,17 @@ from torch.profiler import (
     record_function,
     schedule,
     tensorboard_trace_handler,
+)
+
+from stellatscale.memory_experiment import (
+    ComparisonTolerances,
+    FrozenLoRALinear,
+    LinearModelVariant,
+    MemoryExperimentConfig,
+    MemorySummary,
+    build_theoretical_summary,
+    bytes_to_gib,
+    compare_theory_to_measurement,
 )
 
 if TYPE_CHECKING:
@@ -42,12 +54,11 @@ SNAPSHOT_DIR = ROOT / "deliverables" / "single_layer_lora_outputs"
 OUTPUT_DIR = SNAPSHOT_DIR / "mosaic"
 ANNOTATIONS = ("## forward ##", "## backward ##", "## optimizer ##")
 SNAPSHOT_NAMES = ("dense", "frozen_lora")
+COMPARISON_REPORT_PATH = OUTPUT_DIR / "theory_comparison.json"
 
-STEPS = 5
-BATCH_SIZE = 16
-IN_FEATURES = 4096
-OUT_FEATURES = 4096
-RANK = 16
+EXPERIMENT_CONFIG = MemoryExperimentConfig(
+    batch_size=16, in_features=4096, out_features=4096, lora_rank=16, steps=5, learning_rate=0.05
+)
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -63,39 +74,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-class LoRALinear(nn.Module):
-    """Linear layer with a frozen base projection and trainable LoRA adapters."""
-
-    def __init__(self, base: nn.Linear, rank: int) -> None:
-        super().__init__()
-        self.base = base
-        self.base.requires_grad_(requires_grad=False)
-        self.lora_a = nn.Linear(base.in_features, rank, bias=False)
-        self.lora_b = nn.Linear(rank, base.out_features, bias=False)
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Apply the frozen base projection and the LoRA update."""
-        return self.base(inputs) + self.lora_b(self.lora_a(inputs))
-
-
 def build_inputs() -> tuple[torch.Tensor, torch.Tensor]:
     """Create deterministic inputs and labels for the profiling run."""
     generator = torch.Generator(device="cpu").manual_seed(7)
-    inputs = torch.randn(BATCH_SIZE, IN_FEATURES, generator=generator)
-    labels = torch.randn(BATCH_SIZE, OUT_FEATURES, generator=generator)
+    inputs = torch.randn(
+        EXPERIMENT_CONFIG.batch_size, EXPERIMENT_CONFIG.in_features, generator=generator
+    )
+    labels = torch.randn(
+        EXPERIMENT_CONFIG.batch_size, EXPERIMENT_CONFIG.out_features, generator=generator
+    )
     return inputs.to(DEVICE), labels.to(DEVICE)
 
 
 def make_dense_model() -> nn.Module:
     """Construct the dense linear baseline model."""
     torch.manual_seed(7)
-    return nn.Linear(IN_FEATURES, OUT_FEATURES, bias=False)
+    return nn.Linear(EXPERIMENT_CONFIG.in_features, EXPERIMENT_CONFIG.out_features, bias=False)
 
 
 def make_lora_model() -> nn.Module:
     """Construct the frozen-base LoRA variant used for comparison."""
     torch.manual_seed(7)
-    return LoRALinear(nn.Linear(IN_FEATURES, OUT_FEATURES, bias=False), rank=RANK)
+    return FrozenLoRALinear(
+        nn.Linear(EXPERIMENT_CONFIG.in_features, EXPERIMENT_CONFIG.out_features, bias=False),
+        rank=EXPERIMENT_CONFIG.lora_rank,
+    )
 
 
 def profiler_activities() -> list[ProfilerActivity]:
@@ -103,11 +106,6 @@ def profiler_activities() -> list[ProfilerActivity]:
     if DEVICE.type == "cuda":
         return [ProfilerActivity.CPU, ProfilerActivity.CUDA]
     return [ProfilerActivity.CPU]
-
-
-def bytes_to_gib(num_bytes: float) -> float:
-    """Convert bytes to gibibytes."""
-    return num_bytes / 1024**3
 
 
 @contextmanager
@@ -130,26 +128,26 @@ def run_profile(name: str, model: nn.Module, inputs: torch.Tensor, labels: torch
     model = model.to(DEVICE)
     loss_fn = nn.MSELoss()
     optimizer = torch.optim.AdamW(
-        [parameter for parameter in model.parameters() if parameter.requires_grad], lr=0.05
+        [parameter for parameter in model.parameters() if parameter.requires_grad],
+        lr=EXPERIMENT_CONFIG.learning_rate,
     )
 
     snapshot_path = SNAPSHOT_DIR / f"{name}_snapshot.pickle"
     trace_dir = SNAPSHOT_DIR / f"{name}_traces"
+    profile_schedule = schedule(wait=0, warmup=0, active=EXPERIMENT_CONFIG.steps, repeat=1)
 
     with (
         capture_snapshot(snapshot_path),
         profile(
             activities=profiler_activities(),
-            schedule=schedule(wait=0, warmup=0, active=STEPS, repeat=1),  # codespell:ignore warmup
+            schedule=profile_schedule,
             record_shapes=True,
             profile_memory=True,
             with_stack=True,
             on_trace_ready=tensorboard_trace_handler(str(trace_dir)),
         ) as profiler,
     ):
-        for _ in range(STEPS):
-            profiler.step()
-
+        for _ in range(EXPERIMENT_CONFIG.steps):
             with record_function("## forward ##"):
                 pred = model(inputs)
 
@@ -160,6 +158,8 @@ def run_profile(name: str, model: nn.Module, inputs: torch.Tensor, labels: torch
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
+            profiler.step()
+
     sys.stdout.write(f"{name}\n")
     sys.stdout.write(f"  snapshot: {snapshot_path}\n")
     sys.stdout.write(f"  trace_dir: {trace_dir}\n")
@@ -168,12 +168,10 @@ def run_profile(name: str, model: nn.Module, inputs: torch.Tensor, labels: torch
 def load_mosaic() -> tuple[Any, Any, Any, Any]:
     """Import the Mosaic entry points required for report generation."""
     try:
-        from mosaic.cmd.entry_point import (  # noqa: PLC0415
-            get_memory_profile,
-            get_memory_usage_by_annotation_stage,
-            get_memory_usage_peak,
+        entry_point = importlib.import_module("mosaic.cmd.entry_point")
+        memory_abstract_module = importlib.import_module(
+            "mosaic.libmosaic.analyzer.memory_abstract"
         )
-        from mosaic.libmosaic.analyzer.memory_abstract import MemoryAbstract  # noqa: PLC0415
     except ImportError as exc:
         message = (
             "Mosaic is not importable in the current environment. Run `uv sync --group mosaic` "
@@ -182,10 +180,10 @@ def load_mosaic() -> tuple[Any, Any, Any, Any]:
         raise ImportError(message) from exc
 
     return (
-        get_memory_profile,
-        get_memory_usage_by_annotation_stage,
-        get_memory_usage_peak,
-        MemoryAbstract,
+        entry_point.get_memory_profile,
+        entry_point.get_memory_usage_by_annotation_stage,
+        entry_point.get_memory_usage_peak,
+        memory_abstract_module.MemoryAbstract,
     )
 
 
@@ -213,7 +211,7 @@ def build_peak_summary(name: str, memory_abstract: MemoryAbstractProtocol) -> di
     }
 
 
-def analyze_snapshot(name: str) -> dict[str, Any]:
+def analyze_snapshot(name: str) -> MemorySummary:
     """Generate Mosaic reports and a summary JSON file for one snapshot."""
     snapshot_path = SNAPSHOT_DIR / f"{name}_snapshot.pickle"
     if not snapshot_path.exists():
@@ -292,23 +290,23 @@ def analyze_snapshot(name: str) -> dict[str, Any]:
     sys.stdout.write(f"  peak_report: {peak_report_path}\n")
     sys.stdout.write(f"  summary: {summary_path}\n")
 
-    return peak_summary
+    return MemorySummary.from_mapping(peak_summary)
 
 
-def write_comparison(summaries: list[dict[str, Any]]) -> Path:
+def write_comparison(summaries: list[MemorySummary]) -> Path:
     """Write a dense-vs-LoRA comparison JSON file."""
-    summary_by_name = {summary["name"]: summary for summary in summaries}
+    summary_by_name = {summary.name: summary for summary in summaries}
     dense = summary_by_name["dense"]
     frozen_lora = summary_by_name["frozen_lora"]
 
     comparison = {
-        "dense": dense,
-        "frozen_lora": frozen_lora,
+        "dense": dense.to_dict(),
+        "frozen_lora": frozen_lora.to_dict(),
         "delta": {
-            "dynamic_peak_bytes": frozen_lora["dynamic_peak_bytes"] - dense["dynamic_peak_bytes"],
-            "dynamic_peak_gib": frozen_lora["dynamic_peak_gib"] - dense["dynamic_peak_gib"],
-            "overall_peak_bytes": frozen_lora["overall_peak_bytes"] - dense["overall_peak_bytes"],
-            "overall_peak_gib": frozen_lora["overall_peak_gib"] - dense["overall_peak_gib"],
+            "dynamic_peak_bytes": frozen_lora.dynamic_peak_bytes - dense.dynamic_peak_bytes,
+            "dynamic_peak_gib": frozen_lora.dynamic_peak_gib - dense.dynamic_peak_gib,
+            "overall_peak_bytes": frozen_lora.overall_peak_bytes - dense.overall_peak_bytes,
+            "overall_peak_gib": frozen_lora.overall_peak_gib - dense.overall_peak_gib,
         },
     }
 
@@ -317,11 +315,44 @@ def write_comparison(summaries: list[dict[str, Any]]) -> Path:
     return comparison_path
 
 
+def write_theory_comparison(summaries: list[MemorySummary]) -> Path:
+    """Write a theory-vs-experiment comparison report for each variant."""
+    possible_gap_sources = [
+        "Theoretical gaps may come from incomplete theory, implementation details, or runtime behavior.",
+        "Allocator caching, autograd temporaries, and kernel workspaces can all move the measured result away from the simple tensor model.",
+    ]
+    keepalive_script = ROOT / "scripts" / "gpu_keepalive_loop.sh"
+    if keepalive_script.exists():
+        possible_gap_sources.append(
+            "External GPU workload from scripts like scripts/gpu_keepalive_loop.sh can perturb allocator baselines if running concurrently."
+        )
+
+    comparisons = {}
+    for summary in summaries:
+        variant = LinearModelVariant(summary.name)
+        theory = build_theoretical_summary(EXPERIMENT_CONFIG, variant)
+        comparison = compare_theory_to_measurement(
+            theory,
+            summary,
+            tolerances=ComparisonTolerances(),
+            notes=(
+                "Keep the theory-vs-experiment gap explicit: disagreement is a signal to investigate, not something to smooth away.",
+            ),
+            possible_gap_sources=tuple(possible_gap_sources),
+        )
+        comparisons[summary.name] = comparison.to_dict()
+
+    COMPARISON_REPORT_PATH.write_text(json.dumps(comparisons, indent=2), encoding="utf-8")
+    return COMPARISON_REPORT_PATH
+
+
 def run_mosaic_analysis() -> None:
     """Analyze all known snapshots and emit a comparison summary."""
     summaries = [analyze_snapshot(name) for name in SNAPSHOT_NAMES]
     comparison_path = write_comparison(summaries)
+    theory_path = write_theory_comparison(summaries)
     sys.stdout.write(f"comparison: {comparison_path}\n")
+    sys.stdout.write(f"theory_comparison: {theory_path}\n")
 
 
 def main() -> None:
