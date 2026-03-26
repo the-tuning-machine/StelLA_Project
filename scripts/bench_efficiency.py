@@ -9,6 +9,7 @@ Measures per architecture:
   - GPU utilization timeline & memory usage plots
 """
 
+import gc
 import logging
 import time
 import tracemalloc
@@ -195,7 +196,23 @@ def bench_model(
     total = sum(p.numel() for p in model.parameters())
     opt_state_bytes = trainable * 2 * 4
 
+    if USE_GPU:
+        LOGGER.info(
+            "  [%s r=%s] after .to(device): allocated=%.1f MB",
+            name,
+            rank,
+            torch.cuda.memory_allocated() / 1e6,
+        )
+
     _warm_up_model(model, optimizer, criterion, x, target)
+
+    if USE_GPU:
+        LOGGER.info(
+            "  [%s r=%s] after warmup: allocated=%.1f MB",
+            name,
+            rank,
+            torch.cuda.memory_allocated() / 1e6,
+        )
 
     fwd_times: list[float] = []
     bwd_times: list[float] = []
@@ -398,21 +415,33 @@ def main() -> None:
     results: list[BenchResult] = []
     base_kw = {"n_embd": N_EMBD, "n_head": N_HEAD, "n_layer": N_LAYER, "block_size": BLOCK_SIZE}
 
+    def _cleanup() -> None:
+        """Force-free GPU memory between benchmark runs to avoid contamination."""
+        gc.collect()
+        if USE_GPU:
+            torch.cuda.empty_cache()
+
     # Transformer baseline (no rank dependency, bench once)
     m = Transformer(**base_kw)
     opt = torch.optim.AdamW(m.parameters(), lr=0.01)
     results.append(bench_model("Transformer", m, opt, rank=None))
+    del m, opt
+    _cleanup()
 
     for rank in RANKS:
         # LoRA
         m = LoRATransformer(**base_kw, rank=rank)
         opt = torch.optim.AdamW(m.parameters(), lr=0.01)
         results.append(bench_model("LoRA", m, opt, rank=rank))
+        del m, opt
+        _cleanup()
 
         # StelLA
         m = StelLATransformer(**base_kw, rank=rank)
         opt = StelLAAdamW(m.parameters(), lr=0.01)
         results.append(bench_model("StelLA", m, opt, rank=rank))
+        del m, opt
+        _cleanup()
 
     # ── Print results ────────────────────────────────────────────────────────
 

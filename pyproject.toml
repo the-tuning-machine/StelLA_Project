@@ -59,7 +59,8 @@ dev = [
 [tool.codespell]  # https://github.com/codespell-project/codespell
 builtin = "en-GB_to_en-US,clear,code,rare"
 check-filenames = true
-skip = "./*_cache/,./.venv,./reports,./*.ipynb,./*.pdf"
+ignore-words-list = "warmup"
+skip = "./*_cache/,./.venv,./reports,./*.ipynb,./*.pdf,./nanoGPT,./stella_repo"
 
 [tool.commitizen]  # https://commitizen-tools.github.io/commitizen/config/
 bump_message = "bump: v$current_version → v$new_version"
