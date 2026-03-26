@@ -167,9 +167,14 @@ class StelLAAdamW(torch.optim.AdamW):
     _current_stella_model: _StellaHookModel | None = None
 
     @classmethod
-    def set_current_stella_model(cls, model: _StellaHookModel) -> None:
+    def set_current_stella_model(cls, model: _StellaHookModel | None) -> None:
         """Store the current StelLA model so hooks can be attached during optimizer init."""
         cls._current_stella_model = model
+
+    @classmethod
+    def clear_current_stella_model(cls) -> None:
+        """Release the reference to the current StelLA model (avoids GPU memory leaks)."""
+        cls._current_stella_model = None
 
     def __init__(self, params: Iterable[torch.nn.Parameter], lr: float = 0.001) -> None:
         super().__init__(list(params), lr=lr)

@@ -453,6 +453,7 @@ def main() -> None:
 
     def _cleanup() -> None:
         """Force-free GPU memory between benchmark runs to avoid contamination."""
+        StelLAAdamW.clear_current_stella_model()
         gc.collect()
         if USE_GPU:
             torch.cuda.empty_cache()
