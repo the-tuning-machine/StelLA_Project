@@ -112,6 +112,7 @@ def _run_gpu_step(
 
     start_fwd = torch.cuda.Event(enable_timing=True)
     end_fwd = torch.cuda.Event(enable_timing=True)
+    _sync()
     start_fwd.record()
     out = model(x)
     loss = criterion(out, target)
@@ -122,6 +123,7 @@ def _run_gpu_step(
 
     start_bwd = torch.cuda.Event(enable_timing=True)
     end_bwd = torch.cuda.Event(enable_timing=True)
+    _sync()
     start_bwd.record()
     loss.backward()
     end_bwd.record()
@@ -131,6 +133,7 @@ def _run_gpu_step(
 
     start_step = torch.cuda.Event(enable_timing=True)
     end_step = torch.cuda.Event(enable_timing=True)
+    _sync()
     start_step.record()
     optimizer.step()
     end_step.record()
@@ -429,17 +432,17 @@ def main() -> None:
     _cleanup()
 
     for rank in RANKS:
+        # StelLA (run first to check for ordering bias)
+        m = StelLATransformer(**base_kw, rank=rank)
+        opt = StelLAAdamW(m.parameters(), lr=0.01)
+        results.append(bench_model("StelLA", m, opt, rank=rank))
+        del m, opt
+        _cleanup()
+
         # LoRA
         m = LoRATransformer(**base_kw, rank=rank)
         opt = torch.optim.AdamW(m.parameters(), lr=0.01)
         results.append(bench_model("LoRA", m, opt, rank=rank))
-        del m, opt
-        _cleanup()
-
-        # StelLA
-        m = StelLATransformer(**base_kw, rank=rank)
-        opt = StelLAAdamW(m.parameters(), lr=0.01)
-        results.append(bench_model("StelLA", m, opt, rank=rank))
         del m, opt
         _cleanup()
 
