@@ -110,6 +110,8 @@ def _run_gpu_step(
     _sync()
     mem_before = torch.cuda.memory_allocated() / 1e6
 
+    # ── Forward ──
+    torch.cuda.reset_peak_memory_stats()
     start_fwd = torch.cuda.Event(enable_timing=True)
     end_fwd = torch.cuda.Event(enable_timing=True)
     _sync()
@@ -120,7 +122,10 @@ def _run_gpu_step(
     _sync()
     fwd_ms = start_fwd.elapsed_time(end_fwd)
     mem_after_fwd = torch.cuda.memory_allocated() / 1e6
+    peak_fwd = torch.cuda.max_memory_allocated() / 1e6
 
+    # ── Backward ──
+    torch.cuda.reset_peak_memory_stats()
     start_bwd = torch.cuda.Event(enable_timing=True)
     end_bwd = torch.cuda.Event(enable_timing=True)
     _sync()
@@ -130,7 +135,10 @@ def _run_gpu_step(
     _sync()
     bwd_ms = start_bwd.elapsed_time(end_bwd)
     mem_after_bwd = torch.cuda.memory_allocated() / 1e6
+    peak_bwd = torch.cuda.max_memory_allocated() / 1e6
 
+    # ── Optimizer step ──
+    torch.cuda.reset_peak_memory_stats()
     start_step = torch.cuda.Event(enable_timing=True)
     end_step = torch.cuda.Event(enable_timing=True)
     _sync()
@@ -140,6 +148,7 @@ def _run_gpu_step(
     _sync()
     step_ms = start_step.elapsed_time(end_step)
     mem_after_step = torch.cuda.memory_allocated() / 1e6
+    peak_step = torch.cuda.max_memory_allocated() / 1e6
 
     return (
         fwd_ms,
@@ -153,6 +162,9 @@ def _run_gpu_step(
             "mem_after_fwd_mb": mem_after_fwd,
             "mem_after_bwd_mb": mem_after_bwd,
             "mem_after_step_mb": mem_after_step,
+            "peak_fwd_mb": peak_fwd,
+            "peak_bwd_mb": peak_bwd,
+            "peak_step_mb": peak_step,
             "fwd_ms": fwd_ms,
             "bwd_ms": bwd_ms,
             "step_ms": step_ms,
@@ -238,6 +250,27 @@ def bench_model(
             gpu_mem_alloc.append(alloc_mb)
             gpu_mem_reserved.append(reserved_mb)
             gpu_util_timeline.append(timeline)
+            if step_i == 0:
+                t = timeline
+                LOGGER.info(
+                    "  [%s r=%s] step 0 memory breakdown (MB):\n"
+                    "    before_fwd=%8.1f\n"
+                    "    after_fwd =%8.1f  (peak_fwd =%8.1f  delta=+%.1f)\n"
+                    "    after_bwd =%8.1f  (peak_bwd =%8.1f  delta=+%.1f)\n"
+                    "    after_step=%8.1f  (peak_step=%8.1f  delta=+%.1f)",
+                    name,
+                    rank,
+                    t["mem_before_mb"],
+                    t["mem_after_fwd_mb"],
+                    t["peak_fwd_mb"],
+                    t["peak_fwd_mb"] - t["mem_before_mb"],
+                    t["mem_after_bwd_mb"],
+                    t["peak_bwd_mb"],
+                    t["peak_bwd_mb"] - t["mem_after_fwd_mb"],
+                    t["mem_after_step_mb"],
+                    t["peak_step_mb"],
+                    t["peak_step_mb"] - t["mem_after_bwd_mb"],
+                )
         else:
             fwd_ms, bwd_ms, step_ms = _run_cpu_step(model, optimizer, criterion, x, target)
 
@@ -432,17 +465,17 @@ def main() -> None:
     _cleanup()
 
     for rank in RANKS:
-        # StelLA (run first to check for ordering bias)
-        m = StelLATransformer(**base_kw, rank=rank)
-        opt = StelLAAdamW(m.parameters(), lr=0.01)
-        results.append(bench_model("StelLA", m, opt, rank=rank))
-        del m, opt
-        _cleanup()
-
         # LoRA
         m = LoRATransformer(**base_kw, rank=rank)
         opt = torch.optim.AdamW(m.parameters(), lr=0.01)
         results.append(bench_model("LoRA", m, opt, rank=rank))
+        del m, opt
+        _cleanup()
+
+        # StelLA
+        m = StelLATransformer(**base_kw, rank=rank)
+        opt = StelLAAdamW(m.parameters(), lr=0.01)
+        results.append(bench_model("StelLA", m, opt, rank=rank))
         del m, opt
         _cleanup()
 
