@@ -4,9 +4,12 @@ Isolates the effect of the Stiefel geometry from the parameterization.
 
 Produces: results/ablation/results.json
 """
-from expressivity import ArchitecturalSpace, ArchitectureComparator
-from stellatscale.models import StelLATransformer, EuclideanThreeFactorTransformer, StelLAAdamW
+
 import os
+
+from expressivity import ArchitecturalSpace, ArchitectureComparator
+
+from stellatscale.models import EuclideanThreeFactorTransformer, StelLAAdamW, StelLATransformer
 
 # ── Same hyper-parameters as main.py ─────────────────────────────────────────
 N_EMBD = 8
@@ -24,24 +27,32 @@ stella_params = [{**base_kwargs, "rank": r} for r in RANKS]
 
 # Euclidean 3-factor: same USV^T decomposition, standard AdamW (no Riemannian hooks)
 euclid_space = ArchitecturalSpace(
-    INPUT_SIZE, "Euclidean 3-factor", EuclideanThreeFactorTransformer, euclid_params,
-    epoch=20, lr=0.01, automatic_mesurement_mode="parameters",
-    batch_size=BATCH_SIZE, automatic_batch_size_scale=None,
+    INPUT_SIZE,
+    "Euclidean 3-factor",
+    EuclideanThreeFactorTransformer,
+    euclid_params,
+    epoch=20,
+    lr=0.01,
+    automatic_mesurement_mode="parameters",
+    batch_size=BATCH_SIZE,
+    automatic_batch_size_scale=None,
 )
 
 # StelLA: USV^T with Stiefel constraint
 stella_space = ArchitecturalSpace(
-    INPUT_SIZE, "StelLA", StelLATransformer, stella_params,
-    epoch=20, lr=0.01, automatic_mesurement_mode="parameters",
-    batch_size=BATCH_SIZE, automatic_batch_size_scale=None,
+    INPUT_SIZE,
+    "StelLA",
+    StelLATransformer,
+    stella_params,
+    epoch=20,
+    lr=0.01,
+    automatic_mesurement_mode="parameters",
+    batch_size=BATCH_SIZE,
+    automatic_batch_size_scale=None,
     optimizer=StelLAAdamW,
 )
 
 # ── Run comparison ───────────────────────────────────────────────────────────
 comparator = ArchitectureComparator(euclid_space, stella_space)
-res = comparator.compare(
-    1000,
-    5,
-    save_path=os.path.join(os.getcwd(), "results", "ablation"),
-)
+res = comparator.compare(1000, 5, save_path=os.path.join(os.getcwd(), "results", "ablation"))
 print(res)

@@ -6,12 +6,13 @@ Produces: figures/orthogonality_drift.png
 """
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
+from torch import nn
 
-from stellatscale.models import StelLATransformer, EuclideanThreeFactorTransformer, StelLAAdamW
+from stellatscale.models import EuclideanThreeFactorTransformer, StelLAAdamW, StelLATransformer
 
 # ── Config ───────────────────────────────────────────────────────────────────
 N_EMBD = 8
@@ -36,7 +37,8 @@ def get_stiefel_matrices(model):
 
 def orthogonality_deviation(mats):
     """Compute mean ||M M^T - I||_F across all Stiefel matrices.
-    M is (out_dim, r), so M^T M should be I_r."""
+    M is (out_dim, r), so M^T M should be I_r.
+    """
     devs = []
     for M in mats:
         # M shape: (out_features, r) -- columns should be orthonormal
@@ -81,8 +83,13 @@ def train_and_track(name, model, optimizer, steps):
 
 def main():
     torch.manual_seed(42)
-    base_kw = {"n_embd": N_EMBD, "n_head": N_HEAD, "n_layer": N_LAYER,
-               "block_size": BLOCK_SIZE, "rank": RANK}
+    base_kw = {
+        "n_embd": N_EMBD,
+        "n_head": N_HEAD,
+        "n_layer": N_LAYER,
+        "block_size": BLOCK_SIZE,
+        "rank": RANK,
+    }
 
     # StelLA (Stiefel constraint)
     torch.manual_seed(42)

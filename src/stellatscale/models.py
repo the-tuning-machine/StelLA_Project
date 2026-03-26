@@ -108,12 +108,22 @@ class StelLATransformer(nn.Module):
 
 
 class EuclideanThreeFactorTransformer(nn.Module):
-    """Same three-factor decomposition USV^T as StelLA, but trained with
-    standard AdamW (no Riemannian hooks). U and V start orthogonal but
-    are free to drift during training. This isolates the effect of the
-    Stiefel geometry from the parameterization."""
+    """Same three-factor decomposition USV^T as StelLA, but with standard AdamW.
 
-    def __init__(self, n_embd=8, n_head=2, n_layer=1, block_size=16, rank=4, alpha=1, **kwargs):
+    U and V start orthogonal but are free to drift during training.
+    This isolates the effect of the Stiefel geometry from the parameterization.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        n_embd: int = 8,
+        n_head: int = 2,
+        n_layer: int = 1,
+        block_size: int = 16,
+        rank: int = 4,
+        alpha: int = 1,
+        **_: object,
+    ) -> None:
         super().__init__()
         base = Transformer(n_embd=n_embd, n_head=n_head, n_layer=n_layer, block_size=block_size)
         stella_config = StellaConfig(
@@ -124,11 +134,12 @@ class EuclideanThreeFactorTransformer(nn.Module):
             stella_grad_scaling=float(n_embd),
             stella_retraction="exp_map",
         )
-        self.model = get_peft_model(base, stella_config)
+        self.model = get_peft_model(cast("Any", base), stella_config)
         # NOTE: We do NOT set StelLAAdamW._current_stella_model here.
         # This model will be used with standard AdamW, so no hooks.
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the Euclidean three-factor model on a batch of inputs."""
         return self.model(x)
 
 

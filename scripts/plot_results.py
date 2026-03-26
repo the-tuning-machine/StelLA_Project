@@ -13,7 +13,9 @@ Produces:
 
 import json
 import os
+
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -53,18 +55,42 @@ def plot_comparison(results, title_prefix, save_prefix, baseline_name=None):
     fig, ax = plt.subplots(figsize=(6, 4))
 
     # A
-    ax.plot(meas_A, mean_A, "o-", color=COLORS.get(A_name, "#4C72B0"),
-            label=f"{A_name} (mean)", linewidth=2, markersize=5)
-    ax.fill_between(meas_A, min_A, mean_A,
-                    color=COLORS.get(A_name, "#4C72B0"), alpha=0.15,
-                    label=f"{A_name} (min–mean)")
+    ax.plot(
+        meas_A,
+        mean_A,
+        "o-",
+        color=COLORS.get(A_name, "#4C72B0"),
+        label=f"{A_name} (mean)",
+        linewidth=2,
+        markersize=5,
+    )
+    ax.fill_between(
+        meas_A,
+        min_A,
+        mean_A,
+        color=COLORS.get(A_name, "#4C72B0"),
+        alpha=0.15,
+        label=f"{A_name} (min–mean)",
+    )
 
     # B
-    ax.plot(meas_B, mean_B, "s-", color=COLORS.get(B_name, "#55A868"),
-            label=f"{B_name} (mean)", linewidth=2, markersize=5)
-    ax.fill_between(meas_B, min_B, mean_B,
-                    color=COLORS.get(B_name, "#55A868"), alpha=0.15,
-                    label=f"{B_name} (min–mean)")
+    ax.plot(
+        meas_B,
+        mean_B,
+        "s-",
+        color=COLORS.get(B_name, "#55A868"),
+        label=f"{B_name} (mean)",
+        linewidth=2,
+        markersize=5,
+    )
+    ax.fill_between(
+        meas_B,
+        min_B,
+        mean_B,
+        color=COLORS.get(B_name, "#55A868"),
+        alpha=0.15,
+        label=f"{B_name} (min–mean)",
+    )
 
     ax.set_xlabel("Trainable Parameters")
     ax.set_ylabel("Fitting Loss (MSE)")
@@ -74,12 +100,24 @@ def plot_comparison(results, title_prefix, save_prefix, baseline_name=None):
 
     # Add rank annotations
     for i, r in enumerate(ranks):
-        ax.annotate(f"r={r}", (meas_A[i], mean_A[i]),
-                    textcoords="offset points", xytext=(0, 8),
-                    fontsize=7, color=COLORS.get(A_name, "#4C72B0"), ha="center")
-        ax.annotate(f"r={r}", (meas_B[i], mean_B[i]),
-                    textcoords="offset points", xytext=(0, -12),
-                    fontsize=7, color=COLORS.get(B_name, "#55A868"), ha="center")
+        ax.annotate(
+            f"r={r}",
+            (meas_A[i], mean_A[i]),
+            textcoords="offset points",
+            xytext=(0, 8),
+            fontsize=7,
+            color=COLORS.get(A_name, "#4C72B0"),
+            ha="center",
+        )
+        ax.annotate(
+            f"r={r}",
+            (meas_B[i], mean_B[i]),
+            textcoords="offset points",
+            xytext=(0, -12),
+            fontsize=7,
+            color=COLORS.get(B_name, "#55A868"),
+            ha="center",
+        )
 
     fig.tight_layout()
     fig.savefig(os.path.join(FIGURES_DIR, f"{save_prefix}_mean_comparison.png"), dpi=150)
@@ -88,10 +126,24 @@ def plot_comparison(results, title_prefix, save_prefix, baseline_name=None):
     # ── Min comparison ───────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    ax.plot(meas_A, min_A, "o-", color=COLORS.get(A_name, "#4C72B0"),
-            label=f"{A_name} (min)", linewidth=2, markersize=5)
-    ax.plot(meas_B, min_B, "s-", color=COLORS.get(B_name, "#55A868"),
-            label=f"{B_name} (min)", linewidth=2, markersize=5)
+    ax.plot(
+        meas_A,
+        min_A,
+        "o-",
+        color=COLORS.get(A_name, "#4C72B0"),
+        label=f"{A_name} (min)",
+        linewidth=2,
+        markersize=5,
+    )
+    ax.plot(
+        meas_B,
+        min_B,
+        "s-",
+        color=COLORS.get(B_name, "#55A868"),
+        label=f"{B_name} (min)",
+        linewidth=2,
+        markersize=5,
+    )
 
     ax.set_xlabel("Trainable Parameters")
     ax.set_ylabel("Best Fitting Loss (MSE)")
@@ -100,12 +152,24 @@ def plot_comparison(results, title_prefix, save_prefix, baseline_name=None):
     ax.grid(True, alpha=0.3)
 
     for i, r in enumerate(ranks):
-        ax.annotate(f"r={r}", (meas_A[i], min_A[i]),
-                    textcoords="offset points", xytext=(0, 8),
-                    fontsize=7, color=COLORS.get(A_name, "#4C72B0"), ha="center")
-        ax.annotate(f"r={r}", (meas_B[i], min_B[i]),
-                    textcoords="offset points", xytext=(0, -12),
-                    fontsize=7, color=COLORS.get(B_name, "#55A868"), ha="center")
+        ax.annotate(
+            f"r={r}",
+            (meas_A[i], min_A[i]),
+            textcoords="offset points",
+            xytext=(0, 8),
+            fontsize=7,
+            color=COLORS.get(A_name, "#4C72B0"),
+            ha="center",
+        )
+        ax.annotate(
+            f"r={r}",
+            (meas_B[i], min_B[i]),
+            textcoords="offset points",
+            xytext=(0, -12),
+            fontsize=7,
+            color=COLORS.get(B_name, "#55A868"),
+            ha="center",
+        )
 
     fig.tight_layout()
     fig.savefig(os.path.join(FIGURES_DIR, f"{save_prefix}_min_comparison.png"), dpi=150)

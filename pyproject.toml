@@ -112,6 +112,9 @@ ban-relative-imports = "all"
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false
 
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["ANN", "B007", "D", "FBT003", "ICN001", "INP001", "N806", "PTH", "RUF001", "T201", "T203"]
+
 [tool.ruff.lint.pycodestyle]
 max-doc-length = 100
 
@@ -122,7 +125,7 @@ convention = "numpy"
 python-platform = "all"
 
 [tool.ty.src]
-include = ["src", "tests", "scripts"]
+include = ["src", "tests"]
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"

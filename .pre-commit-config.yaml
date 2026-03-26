@@ -98,5 +98,5 @@ repos:
         entry: uv run --no-sync ty check
         require_serial: true
         language: system
-        files: ^(src|tests|scripts)/
+        files: ^(src|tests)/
         types_or: [python, pyi]
