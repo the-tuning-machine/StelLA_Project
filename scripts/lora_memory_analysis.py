@@ -50,11 +50,13 @@ class MemoryAbstractProtocol(Protocol):
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SNAPSHOT_DIR = ROOT / "deliverables" / "single_layer_lora_outputs"
-OUTPUT_DIR = SNAPSHOT_DIR / "mosaic"
+RESULTS_DIR = ROOT / "results" / "memory" / "single_layer_lora"
+SNAPSHOT_DIR = RESULTS_DIR / "snapshots"
+TRACE_DIR = RESULTS_DIR / "traces"
+OUTPUT_DIR = RESULTS_DIR / "mosaic"
 ANNOTATIONS = ("## forward ##", "## backward ##", "## optimizer ##")
 SNAPSHOT_NAMES = ("dense", "frozen_lora")
-COMPARISON_REPORT_PATH = OUTPUT_DIR / "theory_comparison.json"
+COMPARISON_REPORT_PATH = RESULTS_DIR / "theory_comparison.json"
 
 EXPERIMENT_CONFIG = MemoryExperimentConfig(
     batch_size=16, in_features=4096, out_features=4096, lora_rank=16, steps=5, learning_rate=0.05
@@ -132,8 +134,10 @@ def run_profile(name: str, model: nn.Module, inputs: torch.Tensor, labels: torch
         lr=EXPERIMENT_CONFIG.learning_rate,
     )
 
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    TRACE_DIR.mkdir(parents=True, exist_ok=True)
     snapshot_path = SNAPSHOT_DIR / f"{name}_snapshot.pickle"
-    trace_dir = SNAPSHOT_DIR / f"{name}_traces"
+    trace_dir = TRACE_DIR / name
     profile_schedule = schedule(wait=0, warmup=0, active=EXPERIMENT_CONFIG.steps, repeat=1)
 
     with (
@@ -310,7 +314,8 @@ def write_comparison(summaries: list[MemorySummary]) -> Path:
         },
     }
 
-    comparison_path = OUTPUT_DIR / "comparison.json"
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    comparison_path = RESULTS_DIR / "comparison.json"
     comparison_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
     return comparison_path
 
@@ -321,11 +326,6 @@ def write_theory_comparison(summaries: list[MemorySummary]) -> Path:
         "Theoretical gaps may come from incomplete theory, implementation details, or runtime behavior.",
         "Allocator caching, autograd temporaries, and kernel workspaces can all move the measured result away from the simple tensor model.",
     ]
-    keepalive_script = ROOT / "scripts" / "gpu_keepalive_loop.sh"
-    if keepalive_script.exists():
-        possible_gap_sources.append(
-            "External GPU workload from scripts like scripts/gpu_keepalive_loop.sh can perturb allocator baselines if running concurrently."
-        )
 
     comparisons = {}
     for summary in summaries:
@@ -342,6 +342,7 @@ def write_theory_comparison(summaries: list[MemorySummary]) -> Path:
         )
         comparisons[summary.name] = comparison.to_dict()
 
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     COMPARISON_REPORT_PATH.write_text(json.dumps(comparisons, indent=2), encoding="utf-8")
     return COMPARISON_REPORT_PATH
 
@@ -359,6 +360,7 @@ def main() -> None:
     """Run profiling and, when available, Mosaic post-processing."""
     args = parse_args()
 
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.mosaic_only:
