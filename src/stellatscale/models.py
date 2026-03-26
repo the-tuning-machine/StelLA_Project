@@ -91,7 +91,7 @@ class StelLATransformer(nn.Module):
             target_modules=["c_attn", "c_proj", "c_fc"],
             bias="none",
             stella_grad_scaling=float(n_embd),
-            stella_retraction="exp_map",
+            stella_retraction="polar",
         )
         self.model = get_peft_model(cast("Any", base), stella_config)
         # Register the StellaModel so the optimizer hooks can find it.
@@ -132,7 +132,7 @@ class EuclideanThreeFactorTransformer(nn.Module):
             target_modules=["c_attn", "c_proj", "c_fc"],
             bias="none",
             stella_grad_scaling=float(n_embd),
-            stella_retraction="exp_map",
+            stella_retraction="polar",
         )
         self.model = get_peft_model(cast("Any", base), stella_config)
         # NOTE: We do NOT set StelLAAdamW._current_stella_model here.
