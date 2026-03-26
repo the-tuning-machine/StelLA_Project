@@ -1,0 +1,6 @@
+[submodule "nanoGPT"]
+	path = nanoGPT
+	url = https://github.com/karpathy/nanoGPT
+[submodule "stella_repo"]
+	path = stella_repo
+	url = https://github.com/SonyResearch/stella

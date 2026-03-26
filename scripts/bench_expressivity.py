@@ -47,8 +47,8 @@ transformer_space = ArchitecturalSpace(
 # 1. LoRA vs StelLA (direct)
 comparator_direct = ArchitectureComparator(lora_space, stella_space)
 res1 = comparator_direct.compare(
-    1000, 
-    5, 
+    1000,
+    5,
     save_path=os.path.join(os.getcwd(), "results", "direct_comparison")
 )
 print(res1)
@@ -57,8 +57,8 @@ comparator_direct.plot("mean")
 # 2. LoRA vs StelLA with Transformer as neutral baseline
 comparator_baseline = ArchitectureComparator(lora_space, stella_space, transformer_space)
 res2 = comparator_baseline.compare(
-    1000, 
-    5, 
+    1000,
+    5,
     save_path=os.path.join(os.getcwd(), "results", "transformer_baseline")
 )
 print(res2)
