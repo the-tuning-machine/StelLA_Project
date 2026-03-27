@@ -67,6 +67,68 @@ class LoRATransformer(nn.Module):
         return self.model(x)
 
 
+class _SingleLinearBackbone(nn.Module):
+    """Minimal wrapper exposing a named linear module for PEFT adaptation."""
+
+    def __init__(self, linear: nn.Linear) -> None:
+        super().__init__()
+        self.linear = linear
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the wrapped linear layer."""
+        return self.linear(x)
+
+
+class LoRALinear(nn.Module):
+    """Single linear layer adapted with the official PEFT LoRA wrapper."""
+
+    def __init__(self, base: nn.Linear, rank: int, alpha: int = 1) -> None:
+        super().__init__()
+        base.requires_grad_(requires_grad=False)
+        backbone = _SingleLinearBackbone(base)
+        lora_config = LoraConfig(r=rank, lora_alpha=alpha, target_modules=["linear"], bias="none")
+        self.model = get_peft_model(cast("Any", backbone), lora_config)
+
+    @property
+    def base_layer(self) -> nn.Linear:
+        """Return the underlying frozen dense projection."""
+        base_model = cast("Any", self.model.base_model)
+        return cast("nn.Linear", base_model.model.linear.base_layer)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the LoRA-adapted linear layer."""
+        return self.model(x)
+
+
+class StelLALinear(nn.Module):
+    """Single linear layer adapted with the official PEFT StelLA wrapper."""
+
+    def __init__(self, base: nn.Linear, rank: int, alpha: int = 1) -> None:
+        super().__init__()
+        base.requires_grad_(requires_grad=False)
+        backbone = _SingleLinearBackbone(base)
+        stella_config = StellaConfig(
+            r=rank,
+            lora_alpha=alpha,
+            target_modules=["linear"],
+            bias="none",
+            stella_grad_scaling=float(base.out_features),
+            stella_retraction="exp_map",
+        )
+        self.model = get_peft_model(cast("Any", backbone), stella_config)
+        StelLAAdamW.set_current_stella_model(cast("_StellaHookModel", self.model))
+
+    @property
+    def base_layer(self) -> nn.Linear:
+        """Return the underlying frozen dense projection."""
+        base_model = cast("Any", self.model.base_model)
+        return cast("nn.Linear", base_model.model.linear.base_layer)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the StelLA-adapted linear layer."""
+        return self.model(x)
+
+
 # ── StelLA Transformer (via official stella + PEFT) ──────────────────────────
 
 

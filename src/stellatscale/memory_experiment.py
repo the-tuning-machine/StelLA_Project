@@ -1,4 +1,4 @@
-"""Reusable theory and comparison helpers for the dense-vs-LoRA memory experiment.
+"""Reusable theory and comparison helpers for the linear memory experiment.
 
 The goal of this module is to keep theoretical accounting, measured summaries,
 and the gap between the two as first-class data. Approximate agreement is
@@ -13,9 +13,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
-import torch
-from torch import nn
-
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
@@ -29,8 +26,9 @@ def bytes_to_gib(num_bytes: float) -> float:
 class LinearModelVariant(StrEnum):
     """Supported linear-layer variants for the memory experiment."""
 
-    DENSE = "dense"
-    FROZEN_LORA = "frozen_lora"
+    LINEAR = "linear"
+    LINEAR_LORA = "linear_lora"
+    LINEAR_STELLA = "linear_stella"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +44,11 @@ class MemoryExperimentConfig:
     out_features:
         Output width of the linear layer.
     lora_rank:
-        Rank of the LoRA adapters for the frozen-base variant.
+        Rank of the low-rank adaptation used by the LoRA and StelLA variants.
+    warmup_steps:
+        Number of warmup steps to run before the active profiling window begins.
     steps:
-        Number of training steps to profile.
+        Number of active training steps to profile after warmup.
     learning_rate:
         Optimizer learning rate.
     parameter_bytes:
@@ -69,6 +69,7 @@ class MemoryExperimentConfig:
     in_features: int
     out_features: int
     lora_rank: int
+    warmup_steps: int = 5
     steps: int = 5
     learning_rate: float = 0.05
     parameter_bytes: int = 4
@@ -96,6 +97,10 @@ class MemoryExperimentConfig:
                 message = f"{field_name} must be strictly positive, got {value}"
                 raise ValueError(message)
 
+        if self.warmup_steps < 0:
+            message = f"warmup_steps must be non-negative, got {self.warmup_steps}"
+            raise ValueError(message)
+
         if self.learning_rate <= 0:
             message = f"learning_rate must be strictly positive, got {self.learning_rate}"
             raise ValueError(message)
@@ -111,6 +116,16 @@ class MemoryExperimentConfig:
         return self.lora_rank * (self.in_features + self.out_features)
 
     @property
+    def stella_trainable_parameter_count(self) -> int:
+        """Return the trainable StelLA element count for U, S, and V^T."""
+        return self.lora_trainable_parameter_count + (self.lora_rank**2)
+
+    @property
+    def stella_optimizer_state_parameter_count(self) -> int:
+        """Return the trainable StelLA element count tracked by Adam-style state."""
+        return self.stella_trainable_parameter_count
+
+    @property
     def input_bytes(self) -> int:
         """Return the input tensor size in bytes."""
         return self.batch_size * self.in_features * self.activation_bytes
@@ -119,6 +134,11 @@ class MemoryExperimentConfig:
     def label_bytes(self) -> int:
         """Return the label tensor size in bytes."""
         return self.batch_size * self.out_features * self.activation_bytes
+
+    @property
+    def total_profile_steps(self) -> int:
+        """Return the total number of profiled iterations including warmup."""
+        return self.warmup_steps + self.steps
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,22 +191,6 @@ class TheoreticalMemorySummary:
         }
 
 
-class FrozenLoRALinear(nn.Module):
-    """Linear layer with a frozen base projection and trainable LoRA adapters."""
-
-    def __init__(self, base: nn.Linear, rank: int) -> None:
-        """Initialize the frozen base projection and low-rank adapters."""
-        super().__init__()
-        self.base = base
-        self.base.requires_grad_(requires_grad=False)
-        self.lora_a = nn.Linear(base.in_features, rank, bias=False)
-        self.lora_b = nn.Linear(rank, base.out_features, bias=False)
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Apply the frozen base projection and LoRA update."""
-        return self.base(inputs) + self.lora_b(self.lora_a(inputs))
-
-
 @dataclass(frozen=True, slots=True)
 class AnnotationMetadata:
     """Metadata attached to one measured annotation event."""
@@ -207,6 +211,81 @@ class AnnotationMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
+class AllocatorMemoryState:
+    """Measured CUDA allocator state at a steady-state point in time."""
+
+    allocated_bytes: float
+    allocated_gib: float
+    reserved_bytes: float
+    reserved_gib: float
+    reserved_cached_bytes: float
+    reserved_cached_gib: float
+
+    def to_dict(self) -> dict[str, float]:
+        """Convert the allocator state to a JSON-serializable mapping."""
+        return {
+            "allocated_bytes": self.allocated_bytes,
+            "allocated_gib": self.allocated_gib,
+            "reserved_bytes": self.reserved_bytes,
+            "reserved_gib": self.reserved_gib,
+            "reserved_cached_bytes": self.reserved_cached_bytes,
+            "reserved_cached_gib": self.reserved_cached_gib,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TensorCategorySummary:
+    """Summary of one live CUDA tensor category."""
+
+    bytes: float
+    gib: float
+
+    def to_dict(self) -> dict[str, float]:
+        """Convert the tensor category summary to a JSON-serializable mapping."""
+        return {"bytes": self.bytes, "gib": self.gib}
+
+
+@dataclass(frozen=True, slots=True)
+class LiveTensorDescriptor:
+    """Compact description of a live CUDA tensor not matched to a known category."""
+
+    bytes: float
+    gib: float
+    shape: tuple[int, ...]
+    dtype: str
+    requires_grad: bool
+
+    def to_dict(self) -> dict[str, object]:
+        """Convert the live tensor descriptor to a JSON-serializable mapping."""
+        return {
+            "bytes": self.bytes,
+            "gib": self.gib,
+            "shape": list(self.shape),
+            "dtype": self.dtype,
+            "requires_grad": self.requires_grad,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LiveTensorAccounting:
+    """Break down live CUDA tensor storage at a steady-state checkpoint."""
+
+    total_live_tensor_bytes: float
+    total_live_tensor_gib: float
+    categories: dict[str, TensorCategorySummary]
+    top_other_tensors: tuple[LiveTensorDescriptor, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        """Convert the live tensor accounting to a JSON-serializable mapping."""
+        return {
+            "total_live_tensor_bytes": self.total_live_tensor_bytes,
+            "total_live_tensor_gib": self.total_live_tensor_gib,
+            "categories": {key: value.to_dict() for key, value in self.categories.items()},
+            "top_other_tensors": [tensor.to_dict() for tensor in self.top_other_tensors],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class MemorySummary:
     """Measured memory summary loaded from Mosaic output."""
 
@@ -218,6 +297,8 @@ class MemorySummary:
     overall_peak_bytes: float
     overall_peak_gib: float
     annotation_memory: dict[str, AnnotationMeasurement]
+    allocator_state: AllocatorMemoryState | None = None
+    live_tensor_accounting: LiveTensorAccounting | None = None
     files: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -231,6 +312,14 @@ class MemorySummary:
             files = {
                 key: _require_str(value, f"files[{key}]") for key, value in files_mapping.items()
             }
+        allocator_state_payload = payload.get("allocator_state")
+        allocator_state = None
+        if allocator_state_payload is not None:
+            allocator_state = _parse_allocator_memory_state(allocator_state_payload)
+        live_tensor_accounting_payload = payload.get("live_tensor_accounting")
+        live_tensor_accounting = None
+        if live_tensor_accounting_payload is not None:
+            live_tensor_accounting = _parse_live_tensor_accounting(live_tensor_accounting_payload)
 
         return cls(
             name=_require_str(payload.get("name"), "name"),
@@ -250,6 +339,8 @@ class MemorySummary:
                 key: _parse_annotation_measurement(key, value)
                 for key, value in annotation_payload.items()
             },
+            allocator_state=allocator_state,
+            live_tensor_accounting=live_tensor_accounting,
             files=files,
         )
 
@@ -268,6 +359,19 @@ class MemorySummary:
             message = f"Annotation {key!r} was not found in summary {self.name!r}"
             raise KeyError(message)
         return measurement.memory_bytes
+
+    def annotation_delta_bytes(
+        self,
+        start_annotation_name: str,
+        start_stage: str,
+        end_annotation_name: str,
+        end_stage: str,
+        occurrence: int = 0,
+    ) -> float:
+        """Return the measured byte delta between two annotation events."""
+        start_bytes = self.annotation_bytes(start_annotation_name, start_stage, occurrence)
+        end_bytes = self.annotation_bytes(end_annotation_name, end_stage, occurrence)
+        return end_bytes - start_bytes
 
     def to_dict(self) -> dict[str, object]:
         """Convert the measured summary back to a JSON-serializable mapping."""
@@ -292,6 +396,14 @@ class MemorySummary:
                 }
                 for key, value in self.annotation_memory.items()
             },
+            "allocator_state": (
+                None if self.allocator_state is None else self.allocator_state.to_dict()
+            ),
+            "live_tensor_accounting": (
+                None
+                if self.live_tensor_accounting is None
+                else self.live_tensor_accounting.to_dict()
+            ),
             "files": dict(self.files),
         }
 
@@ -301,9 +413,17 @@ class ComparisonTolerances:
     """Relative tolerances used when comparing theory and measurement."""
 
     static_baseline_relative: float = 0.05
-    forward_dynamic_relative: float = 0.50
-    backward_dynamic_relative: float = 0.50
-    optimizer_dynamic_relative: float = 0.35
+    steady_state_floor_relative: float = 0.35
+    backward_delta_relative: float = 0.50
+    peak_over_floor_relative: float = 0.35
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonNarrative:
+    """Optional notes that explain theory-vs-measurement gaps."""
+
+    notes: tuple[str, ...] = ()
+    possible_gap_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +457,44 @@ class ComparisonMetric:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryAccountingBreakdown:
+    """Break down theory, active tensors, reserved cache, and residual gap."""
+
+    theoretical_model_memory_bytes: float
+    measured_active_tensor_memory_bytes: float
+    measured_reserved_cached_memory_bytes: float
+    unexplained_gap_bytes: float
+    measured_total_reserved_bytes: float
+    measured_mosaic_static_memory_bytes: float
+    tensor_vs_theory_gap_bytes: float
+
+    def to_dict(self) -> dict[str, float]:
+        """Convert the memory accounting breakdown to a JSON-serializable mapping."""
+        return {
+            "theoretical_model_memory_bytes": self.theoretical_model_memory_bytes,
+            "theoretical_model_memory_gib": bytes_to_gib(self.theoretical_model_memory_bytes),
+            "measured_active_tensor_memory_bytes": self.measured_active_tensor_memory_bytes,
+            "measured_active_tensor_memory_gib": bytes_to_gib(
+                self.measured_active_tensor_memory_bytes
+            ),
+            "measured_reserved_cached_memory_bytes": self.measured_reserved_cached_memory_bytes,
+            "measured_reserved_cached_memory_gib": bytes_to_gib(
+                self.measured_reserved_cached_memory_bytes
+            ),
+            "unexplained_gap_bytes": self.unexplained_gap_bytes,
+            "unexplained_gap_gib": bytes_to_gib(self.unexplained_gap_bytes),
+            "measured_total_reserved_bytes": self.measured_total_reserved_bytes,
+            "measured_total_reserved_gib": bytes_to_gib(self.measured_total_reserved_bytes),
+            "measured_mosaic_static_memory_bytes": self.measured_mosaic_static_memory_bytes,
+            "measured_mosaic_static_memory_gib": bytes_to_gib(
+                self.measured_mosaic_static_memory_bytes
+            ),
+            "tensor_vs_theory_gap_bytes": self.tensor_vs_theory_gap_bytes,
+            "tensor_vs_theory_gap_gib": bytes_to_gib(self.tensor_vs_theory_gap_bytes),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class TheoryExperimentComparison:
     """Comparison report preserving both agreement and disagreement."""
 
@@ -344,6 +502,7 @@ class TheoryExperimentComparison:
     theory: TheoreticalMemorySummary
     measured: MemorySummary
     metrics: dict[str, ComparisonMetric]
+    memory_accounting: MemoryAccountingBreakdown
     notes: tuple[str, ...] = ()
     possible_gap_sources: tuple[str, ...] = ()
 
@@ -359,6 +518,7 @@ class TheoryExperimentComparison:
             "theory": self.theory.to_dict(),
             "measured": self.measured.to_dict(),
             "metrics": {key: value.to_dict() for key, value in self.metrics.items()},
+            "memory_accounting": self.memory_accounting.to_dict(),
             "failing_metrics": list(self.failing_metrics),
             "notes": list(self.notes),
             "possible_gap_sources": list(self.possible_gap_sources),
@@ -377,15 +537,16 @@ def build_theoretical_summary(
     if config.include_label_in_static_baseline:
         static_extras += config.label_bytes
 
-    if variant is LinearModelVariant.DENSE:
+    if variant is LinearModelVariant.LINEAR:
         trainable_elements = dense_elements
         trainable_parameter_bytes = dense_parameter_bytes
         resident_parameter_bytes = dense_parameter_bytes
         forward_dynamic_estimate_bytes = (
             config.batch_size * (config.in_features + config.out_features) * config.activation_bytes
         )
-        name = LinearModelVariant.DENSE.value
-    else:
+        name = LinearModelVariant.LINEAR.value
+        optimizer_state_elements = trainable_elements
+    elif variant is LinearModelVariant.LINEAR_LORA:
         trainable_elements = config.lora_trainable_parameter_count
         trainable_parameter_bytes = trainable_elements * config.parameter_bytes
         resident_parameter_bytes = dense_parameter_bytes + trainable_parameter_bytes
@@ -394,10 +555,24 @@ def build_theoretical_summary(
             * (config.in_features + config.out_features + config.lora_rank)
             * config.activation_bytes
         )
-        name = LinearModelVariant.FROZEN_LORA.value
+        name = LinearModelVariant.LINEAR_LORA.value
+        optimizer_state_elements = trainable_elements
+    else:
+        trainable_elements = config.stella_trainable_parameter_count
+        trainable_parameter_bytes = trainable_elements * config.parameter_bytes
+        resident_parameter_bytes = dense_parameter_bytes + trainable_parameter_bytes
+        forward_dynamic_estimate_bytes = (
+            config.batch_size
+            * (config.in_features + config.out_features + config.lora_rank)
+            * config.activation_bytes
+        )
+        name = LinearModelVariant.LINEAR_STELLA.value
+        optimizer_state_elements = config.stella_optimizer_state_parameter_count
 
     gradient_bytes = trainable_elements * config.gradient_bytes
-    optimizer_state_bytes = trainable_elements * config.optimizer_state_bytes_per_trainable_element
+    optimizer_state_bytes = (
+        optimizer_state_elements * config.optimizer_state_bytes_per_trainable_element
+    )
     static_baseline_bytes = resident_parameter_bytes + static_extras
     backward_dynamic_estimate_bytes = gradient_bytes + forward_dynamic_estimate_bytes
     optimizer_dynamic_estimate_bytes = optimizer_state_bytes + forward_dynamic_estimate_bytes
@@ -426,15 +601,53 @@ def compare_theory_to_measurement(
     theory: TheoreticalMemorySummary,
     measured: MemorySummary,
     tolerances: ComparisonTolerances | None = None,
-    notes: tuple[str, ...] = (),
-    possible_gap_sources: tuple[str, ...] = (),
+    active_occurrence: int = 0,
+    narrative: ComparisonNarrative | None = None,
 ) -> TheoryExperimentComparison:
     """Compare theoretical accounting against one measured summary.
 
-    The report intentionally preserves disagreement so it can be investigated
-    later rather than normalized away.
+    Warmup iterations are intentionally excluded from the primary comparison.
+    The main metrics use post-warmup steady-state memory so allocator warmup and
+    one-time optimizer initialization are not conflated with per-step theory.
     """
     actual_tolerances = tolerances or ComparisonTolerances()
+    actual_narrative = narrative or ComparisonNarrative()
+    allocator_state = measured.allocator_state
+    theoretical_model_memory_bytes = float(
+        theory.static_baseline_bytes + theory.optimizer_state_bytes
+    )
+    live_tensor_accounting = measured.live_tensor_accounting
+    measured_active_tensor_memory_bytes = (
+        measured.static_memory_bytes
+        if live_tensor_accounting is None
+        else live_tensor_accounting.total_live_tensor_bytes
+    )
+    measured_reserved_cached_memory_bytes = (
+        0.0 if allocator_state is None else allocator_state.reserved_cached_bytes
+    )
+    active_allocated_bytes = (
+        measured_active_tensor_memory_bytes
+        if allocator_state is None
+        else allocator_state.allocated_bytes
+    )
+    measured_total_reserved_bytes = active_allocated_bytes + measured_reserved_cached_memory_bytes
+    steady_state_floor_bytes = measured.annotation_bytes(
+        "## forward ##", "START", occurrence=active_occurrence
+    )
+    backward_delta_bytes = measured.annotation_delta_bytes(
+        "## forward ##", "END", "## backward ##", "END", occurrence=active_occurrence
+    )
+    peak_over_floor_bytes = measured.dynamic_peak_bytes - steady_state_floor_bytes
+    memory_accounting = MemoryAccountingBreakdown(
+        theoretical_model_memory_bytes=theoretical_model_memory_bytes,
+        measured_active_tensor_memory_bytes=measured_active_tensor_memory_bytes,
+        measured_reserved_cached_memory_bytes=measured_reserved_cached_memory_bytes,
+        unexplained_gap_bytes=active_allocated_bytes - measured_active_tensor_memory_bytes,
+        measured_total_reserved_bytes=measured_total_reserved_bytes,
+        measured_mosaic_static_memory_bytes=measured.static_memory_bytes,
+        tensor_vs_theory_gap_bytes=measured_active_tensor_memory_bytes
+        - theoretical_model_memory_bytes,
+    )
     metrics = {
         "static_baseline": _approximate_metric(
             metric_name="static_baseline",
@@ -442,23 +655,23 @@ def compare_theory_to_measurement(
             measured_bytes=measured.static_memory_bytes,
             tolerance=actual_tolerances.static_baseline_relative,
         ),
-        "forward_end_dynamic": _approximate_metric(
-            metric_name="forward_end_dynamic",
-            predicted_bytes=float(theory.forward_dynamic_estimate_bytes),
-            measured_bytes=measured.annotation_bytes("## forward ##", "END"),
-            tolerance=actual_tolerances.forward_dynamic_relative,
-        ),
-        "backward_end_dynamic": _approximate_metric(
-            metric_name="backward_end_dynamic",
-            predicted_bytes=float(theory.backward_dynamic_estimate_bytes),
-            measured_bytes=measured.annotation_bytes("## backward ##", "END"),
-            tolerance=actual_tolerances.backward_dynamic_relative,
-        ),
-        "optimizer_end_dynamic": _approximate_metric(
-            metric_name="optimizer_end_dynamic",
+        "steady_state_floor": _approximate_metric(
+            metric_name="steady_state_floor",
             predicted_bytes=float(theory.optimizer_dynamic_estimate_bytes),
-            measured_bytes=measured.annotation_bytes("## optimizer ##", "END"),
-            tolerance=actual_tolerances.optimizer_dynamic_relative,
+            measured_bytes=steady_state_floor_bytes,
+            tolerance=actual_tolerances.steady_state_floor_relative,
+        ),
+        "backward_delta": _approximate_metric(
+            metric_name="backward_delta",
+            predicted_bytes=float(theory.gradient_bytes),
+            measured_bytes=backward_delta_bytes,
+            tolerance=actual_tolerances.backward_delta_relative,
+        ),
+        "peak_over_floor": _approximate_metric(
+            metric_name="peak_over_floor",
+            predicted_bytes=float(theory.optimizer_state_bytes),
+            measured_bytes=peak_over_floor_bytes,
+            tolerance=actual_tolerances.peak_over_floor_relative,
         ),
         "dynamic_peak_lower_bound": _lower_bound_metric(
             metric_name="dynamic_peak_lower_bound",
@@ -471,8 +684,9 @@ def compare_theory_to_measurement(
         theory=theory,
         measured=measured,
         metrics=metrics,
-        notes=notes,
-        possible_gap_sources=possible_gap_sources,
+        memory_accounting=memory_accounting,
+        notes=actual_narrative.notes,
+        possible_gap_sources=actual_narrative.possible_gap_sources,
     )
 
 
@@ -543,6 +757,100 @@ def _parse_annotation_measurement(key: str, value: object) -> AnnotationMeasurem
     )
 
 
+def _parse_allocator_memory_state(value: object) -> AllocatorMemoryState:
+    """Parse a measured allocator-state mapping."""
+    mapping = _require_mapping(value, "allocator_state")
+    allocated_bytes = _require_float(
+        mapping.get("allocated_bytes"), "allocator_state.allocated_bytes"
+    )
+    reserved_bytes = _require_float(mapping.get("reserved_bytes"), "allocator_state.reserved_bytes")
+    reserved_cached_bytes = _require_float(
+        mapping.get("reserved_cached_bytes"), "allocator_state.reserved_cached_bytes"
+    )
+    return AllocatorMemoryState(
+        allocated_bytes=allocated_bytes,
+        allocated_gib=_require_float(mapping.get("allocated_gib"), "allocator_state.allocated_gib"),
+        reserved_bytes=reserved_bytes,
+        reserved_gib=_require_float(mapping.get("reserved_gib"), "allocator_state.reserved_gib"),
+        reserved_cached_bytes=reserved_cached_bytes,
+        reserved_cached_gib=_require_float(
+            mapping.get("reserved_cached_gib"), "allocator_state.reserved_cached_gib"
+        ),
+    )
+
+
+def _parse_live_tensor_accounting(value: object) -> LiveTensorAccounting:
+    """Parse a live-tensor accounting mapping."""
+    mapping = _require_mapping(value, "live_tensor_accounting")
+    categories_mapping = _require_mapping(
+        mapping.get("categories"), "live_tensor_accounting.categories"
+    )
+    top_other_payload = mapping.get("top_other_tensors")
+    top_other_tensors: list[LiveTensorDescriptor] = []
+    if top_other_payload is not None:
+        if not isinstance(top_other_payload, list):
+            message = "live_tensor_accounting.top_other_tensors must be a list"
+            raise TypeError(message)
+        top_other_tensors = [
+            _parse_live_tensor_descriptor(item, index)
+            for index, item in enumerate(top_other_payload)
+        ]
+
+    return LiveTensorAccounting(
+        total_live_tensor_bytes=_require_float(
+            mapping.get("total_live_tensor_bytes"), "live_tensor_accounting.total_live_tensor_bytes"
+        ),
+        total_live_tensor_gib=_require_float(
+            mapping.get("total_live_tensor_gib"), "live_tensor_accounting.total_live_tensor_gib"
+        ),
+        categories={
+            key: _parse_tensor_category_summary(category_value, key)
+            for key, category_value in categories_mapping.items()
+        },
+        top_other_tensors=tuple(top_other_tensors),
+    )
+
+
+def _parse_tensor_category_summary(value: object, key: str) -> TensorCategorySummary:
+    """Parse one live tensor category summary."""
+    mapping = _require_mapping(value, f"live_tensor_accounting.categories[{key}]")
+    return TensorCategorySummary(
+        bytes=_require_float(
+            mapping.get("bytes"), f"live_tensor_accounting.categories[{key}].bytes"
+        ),
+        gib=_require_float(mapping.get("gib"), f"live_tensor_accounting.categories[{key}].gib"),
+    )
+
+
+def _parse_live_tensor_descriptor(value: object, index: int) -> LiveTensorDescriptor:
+    """Parse one unmatched live tensor descriptor."""
+    mapping = _require_mapping(value, f"live_tensor_accounting.top_other_tensors[{index}]")
+    shape_payload = mapping.get("shape")
+    if not isinstance(shape_payload, list) or not all(
+        isinstance(item, int) for item in shape_payload
+    ):
+        message = (
+            f"live_tensor_accounting.top_other_tensors[{index}].shape must be a list of integers"
+        )
+        raise TypeError(message)
+    return LiveTensorDescriptor(
+        bytes=_require_float(
+            mapping.get("bytes"), f"live_tensor_accounting.top_other_tensors[{index}].bytes"
+        ),
+        gib=_require_float(
+            mapping.get("gib"), f"live_tensor_accounting.top_other_tensors[{index}].gib"
+        ),
+        shape=tuple(cast("list[int]", shape_payload)),
+        dtype=_require_str(
+            mapping.get("dtype"), f"live_tensor_accounting.top_other_tensors[{index}].dtype"
+        ),
+        requires_grad=_require_bool(
+            mapping.get("requires_grad"),
+            f"live_tensor_accounting.top_other_tensors[{index}].requires_grad",
+        ),
+    )
+
+
 def _require_mapping(value: object, field_name: str) -> Mapping[str, object]:
     """Validate that a value is a mapping."""
     if not isinstance(value, dict):
@@ -571,5 +879,13 @@ def _require_int(value: object, field_name: str) -> int:
     """Validate that a value is an integer."""
     if not isinstance(value, int):
         message = f"{field_name} must be an integer"
+        raise TypeError(message)
+    return value
+
+
+def _require_bool(value: object, field_name: str) -> bool:
+    """Validate that a value is a boolean."""
+    if not isinstance(value, bool):
+        message = f"{field_name} must be a boolean"
         raise TypeError(message)
     return value
