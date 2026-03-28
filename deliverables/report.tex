@@ -42,7 +42,7 @@ We consider three comparisons: (a)~\emph{Direct:} LoRA fits StelLA outputs and v
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.5\textwidth]{figures/direct.png}
+    \includegraphics[draft,width=0.5\textwidth]{figures/direct.png}
     \caption{Direct comparison: mean fitting loss with min--mean shaded region (1000 trials per rank).}
     \label{fig:direct}
 \end{figure}
@@ -53,7 +53,7 @@ StelLA consistently achieves lower fitting loss than LoRA across all ranks (Figu
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.5\textwidth]{figures/baseline.png}
+    \includegraphics[draft,width=0.5\textwidth]{figures/baseline.png}
     \caption{Baseline comparison: both methods approximate a full Transformer. Shaded region shows min--mean spread.}
     \label{fig:baseline}
 \end{figure}
@@ -64,7 +64,7 @@ When both methods approximate a full Transformer (Figure~\ref{fig:baseline}), Lo
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.5\textwidth]{figures/ablation.png}
+    \includegraphics[draft,width=0.5\textwidth]{figures/ablation.png}
     \caption{Ablation: Euclidean 3-factor vs.\ StelLA (same $USV^\top$, different optimizer).}
     \label{fig:ablation}
 \end{figure}
@@ -75,7 +75,7 @@ The Euclidean and Stiefel variants produce remarkably similar expressivity curve
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.7\textwidth]{figures/benchmark_gpu_memory_phases.png}
+    \includegraphics[draft,width=0.7\textwidth]{figures/benchmark_gpu_memory_phases.png}
     \caption{GPU memory usage per training phase (averaged over steps) for a full Transformer, LoRA, and StelLA at ranks $r \in \{8, 32, 64, 128\}$.}
     \label{fig:mem_phases}
 \end{figure}
@@ -84,13 +84,13 @@ The Euclidean and Stiefel variants produce remarkably similar expressivity curve
     \centering
     \begin{minipage}{0.48\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/benchmark_peak_memory.png}
+        \includegraphics[draft,width=\textwidth]{figures/benchmark_peak_memory.png}
         \caption{Peak GPU memory (MB).}
         \label{fig:peak_mem}
     \end{minipage}\hfill
     \begin{minipage}{0.48\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/benchmark_throughput.png}
+        \includegraphics[draft,width=\textwidth]{figures/benchmark_throughput.png}
         \caption{Training throughput (samples/s).}
         \label{fig:throughput}
     \end{minipage}
@@ -104,12 +104,31 @@ To assess StelLA's computational overhead---directly relevant to large-scale dep
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.7\textwidth]{figures/benchmark_time_breakdown.png}
+    \includegraphics[draft,width=0.7\textwidth]{figures/benchmark_time_breakdown.png}
     \caption{Per-step time breakdown (forward / backward / optimizer) in milliseconds.}
     \label{fig:time_breakdown}
 \end{figure}
 
 \paragraph{Time breakdown.} Figure~\ref{fig:time_breakdown} decomposes the per-step wall time into forward, backward, and optimizer phases. Forward and backward times are nearly identical between LoRA and StelLA at each rank, confirming that the Stiefel constraint does not alter the computational graph of these phases. The overhead is entirely concentrated in the optimizer step: at $r{=}128$, StelLA's optimizer phase takes ${\approx}140$\,ms vs.\ ${\approx}10$\,ms for LoRA, accounting for the throughput gap observed above. This is expected, as the polar retraction requires an SVD of an $r \times r$ matrix at each adapted layer per step. At low ranks this cost is negligible, but it scales cubically with $r$, making it the dominant bottleneck at $r{=}128$. This throughput penalty is the main practical cost of the Stiefel constraint and should be weighed against the expressivity and memory gains reported above.
+
+\subsection{Single-Layer Memory Accounting}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.95\textwidth]{figures/single_layer_memory_mosaic_widget_din_4096_dout_4096_r_128_b_128.png}
+    \caption{Single-layer memory comparison for a $4096 \times 4096$ linear layer and rank-$128$ adapters at batch size $128$. The top row compares the measured Mosaic peak breakdown against the analytical tensor-accounting estimate for the dense baseline, LoRA, and StelLA. The bottom row shows the measured Mosaic categories over one profiled training step, with the peak marked by a dashed vertical line.}
+    \label{fig:single_layer_memory}
+\end{figure}
+
+Figure~\ref{fig:single_layer_memory} provides a more controlled view of the memory story behind the end-to-end benchmark. We isolate a single trainable linear layer and compare three variants: full dense training, LoRA, and StelLA. The analytical bars are obtained from explicit tensor accounting: static memory is the resident parameter storage, activation memory is estimated from the forward intermediates, backward memory is approximated by gradient-bearing tensors, and optimizer memory is the Adam state required by trainable parameters. For the dense baseline this yields a total estimate of $264.0$\,MiB, while LoRA and StelLA are both around $88$\,MiB because only the low-rank adapter parameters are trainable.
+
+Analytically, the dense baseline pays full parameter, gradient, and Adam-state cost,
+$$
+m_{\mathrm{dense}} \sim 4d_{\mathrm{out}}d_{\mathrm{in}} + 4d_{\mathrm{out}}d_{\mathrm{in}} + 8d_{\mathrm{out}}d_{\mathrm{in}},
+$$
+while LoRA reduces the trainable part to $r(d_{\mathrm{in}} + d_{\mathrm{out}})$ and StelLA to $r(d_{\mathrm{in}} + d_{\mathrm{out}}) + r^2$, with activation terms of order $4b(d_{\mathrm{in}} + r + d_{\mathrm{out}})$. This gives $264.0$\,MiB for dense training and about $88$\,MiB for both LoRA and StelLA.
+
+The measured bars are taken from Mosaic after 5 warmup and 5 active steps. LoRA reaches $106.2$\,MiB, while StelLA rises to $124.8$\,MiB because its optimizer introduces extra transient workspace. The analytical view is therefore a compact tensor-accounting model, while Mosaic captures the true runtime peak, including temporary buffers and \texttt{Unknown} allocator activity.
 
 \section{Limitations and Discussion}
 

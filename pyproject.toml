@@ -23,6 +23,10 @@ dependencies = [
 [tool.uv.sources]
 stella = { git = "https://github.com/SonyResearch/stella" }
 
+# Mosaic's latest upstream commit is currently broken for this workflow, so we pin
+# to a previous commit.
+mosaic = { git = "https://github.com/facebookresearch/mosaic.git", rev = "27a16228ae22222cf2b834d31afbf64f2dff66e0" }
+
 [build-system]  # https://docs.astral.sh/uv/concepts/build-backend/
 requires = ["uv_build>=0.9.18,<0.11.0"]
 build-backend = "uv_build"
@@ -54,6 +58,24 @@ dev = [
   "ruff (>=0.9.2)",
   "ty (>=0.0.6)",
   "typeguard (>=4.4.1)",
+]
+
+mosaic = [
+  # Keep the runtime deps here because the pinned git package is not pulling
+  # them into this project environment reliably on its own.
+  "altair>=5.5.0",
+  "click>=8.3.0",
+  "mcp>=1.0.0",
+  "mosaic",
+  "omegaconf>=2.3.0",
+  "pandas>=2.3.3",
+  "tabulate>=0.9.0",
+]
+
+profiling = [
+  { include-group = "mosaic" },
+  "tensorboard>=2.20.0",
+  "torch-tb-profiler>=0.4.3",
 ]
 
 [tool.codespell]  # https://github.com/codespell-project/codespell
